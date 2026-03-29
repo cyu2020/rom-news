@@ -1,0 +1,78 @@
+{
+  "$schema": "./sources.schema.json",
+  "version": 1,
+  "sources": [
+    {
+      "id": "arxiv",
+      "label": "arXiv",
+      "url": "https://arxiv.org",
+      "category": "papers",
+      "kind": "arxiv"
+    },
+    {
+      "id": "dassault",
+      "label": "Dassault Systemes",
+      "url": "https://www.3ds.com/newsroom",
+      "category": "industry",
+      "kind": "generic",
+      "rss": "https://www.3ds.com/contents/feed/content/article_press_release"
+    },
+    {
+      "id": "siemens",
+      "label": "Siemens",
+      "url": "https://news.siemens.com/",
+      "category": "industry",
+      "kind": "generic",
+      "newsroom_listing": true
+    },
+    {
+      "id": "nvidia-news",
+      "label": "NVIDIA",
+      "url": "https://nvidianews.nvidia.com/",
+      "category": "industry",
+      "kind": "nvidia",
+      "rss": "https://nvidianews.nvidia.com/rss.xml"
+    },
+    {
+      "id": "physicsx",
+      "label": "PhysicsX",
+      "url": "https://www.physicsx.ai/newsroom",
+      "category": "industry",
+      "kind": "generic",
+      "newsroom_listing": true
+    },
+    {
+      "id": "neural-concept",
+      "label": "Neural Concept",
+      "url": "https://www.neuralconcept.com/resources?category_equal=%5B%22Press+Releases%22%5D",
+      "category": "industry",
+      "kind": "generic",
+      "newsroom_listing": true
+    },
+    {
+      "id": "emmi-ai",
+      "label": "Emmi AI",
+      "url": "https://www.emmi.ai/news",
+      "category": "industry",
+      "kind": "generic",
+      "newsroom_listing": true
+    },
+    {
+      "id": "p1-ai",
+      "label": "P-1 AI",
+      "url": "https://p-1.ai/",
+      "category": "industry",
+      "kind": "generic",
+      "newsroom_listing": true
+    },
+    {
+      "id": "synopsys-simulation-rss",
+      "label": "Synopsys (Simulation & Analysis RSS)",
+      "url": "https://news.synopsys.com/",
+      "category": "industry",
+      "kind": "generic",
+      "rss": "https://news.synopsys.com/home?pagetemplate=rss&category=778",
+      "feed_hosts": ["news.synopsys.com"]
+    }
+  ]
+}

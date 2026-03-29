@@ -1,0 +1,70 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{{ subject }}</title>
+  <style>
+    body { margin: 0; padding: 0; background-color: #f4f2ef; color: #1a1a1a; font-family: Georgia, 'Times New Roman', serif; font-size: 17px; line-height: 1.55; -webkit-text-size-adjust: 100%; }
+    .wrap { max-width: 640px; margin: 0 auto; padding: 24px 20px 48px; background-color: #ffffff; }
+    h1 { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; font-size: 1.55rem; font-weight: 600; line-height: 1.25; margin: 0 0 8px; color: #111; letter-spacing: -0.02em; }
+    .meta { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; font-size: 0.85rem; color: #555; margin-bottom: 28px; border-bottom: 1px solid #e5e2dc; padding-bottom: 16px; }
+    h2.major { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; font-size: 1.25rem; font-weight: 600; margin: 36px 0 12px; color: #111; letter-spacing: -0.02em; border-bottom: 2px solid #1c3d5c; padding-bottom: 8px; }
+    h2.major:first-of-type { margin-top: 8px; }
+    .major-intro p { margin: 0 0 12px; }
+    h3.sub { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; font-size: 1.05rem; font-weight: 600; margin: 24px 0 8px; color: #1c3d5c; letter-spacing: -0.01em; }
+    .section-body { margin: 0 0 10px; }
+    .links { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; font-size: 0.9rem; margin: 0 0 20px; padding-left: 1.1em; color: #333; }
+    .links a { color: #0b5fa8; text-decoration: underline; }
+    footer { margin-top: 40px; padding-top: 20px; border-top: 1px solid #e5e2dc; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; font-size: 0.75rem; color: #777; }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <h1>{{ subject }}</h1>
+    <p class="meta">{{ week_label }}</p>
+
+    <h2 class="major">Industry News</h2>
+    <div class="major-intro">
+{% for p in industry.intro_paras %}
+      <p>{{ p | safe }}</p>
+{% endfor %}
+    </div>
+{% for sub in industry.subsections %}
+    <h3 class="sub">{{ sub.title }}</h3>
+{% for para in sub.paras %}
+    <p class="section-body">{{ para | safe }}</p>
+{% endfor %}
+{% if sub.links %}
+    <ul class="links">
+{% for link in sub.links %}
+      <li><a href="{{ link.url }}">{{ link.label or link.url }}</a></li>
+{% endfor %}
+    </ul>
+{% endif %}
+{% endfor %}
+
+    <h2 class="major">Research Papers</h2>
+    <div class="major-intro">
+{% for p in research.intro_paras %}
+      <p>{{ p | safe }}</p>
+{% endfor %}
+    </div>
+{% for sub in research.subsections %}
+    <h3 class="sub">{{ sub.title }}</h3>
+{% for para in sub.paras %}
+    <p class="section-body">{{ para | safe }}</p>
+{% endfor %}
+{% if sub.links %}
+    <ul class="links">
+{% for link in sub.links %}
+      <li><a href="{{ link.url }}">{{ link.label or link.url }}</a></li>
+{% endfor %}
+    </ul>
+{% endif %}
+{% endfor %}
+
+    <footer>Generated for research &amp; engineering readers. Verify links before citing externally.</footer>
+  </div>
+</body>
+</html>

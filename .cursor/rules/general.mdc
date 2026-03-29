@@ -1,0 +1,31 @@
+---
+description: general instructions.
+alwaysApply: true
+---
+
+# Instructions
+
+During your interaction with the user, if you find anything reusable in this project (e.g. version of a library, model name), especially about a fix to a mistake you made or a correction you received, you should take note in the `Lessons` section in the `general.mdc` file so you will not make the same mistake again. 
+
+# Lessons
+
+## User Specified Lessons
+- Always use (activate) the virtual environment in ./.venv when executing python code. 
+- If ./.venv does not exist, use uv to create one with python 3.13. 
+- The `uv` package manager is available at `/home/cheng-yu/.local/bin/uv`.
+- Always use `/home/cheng-yu/.local/bin/uv pip install` to install any new packages needed.
+
+## Cursor learned
+- **arXiv** `export.arxiv.org` often returns **503** when overloaded; `arxiv_client` retries 429/502/503/504 with backoff; if it still fails, retry later or **`--no-arxiv`**.
+- **Buttondown:** `rom-newsletter-buttondown` posts `dist/newsletter-<date>.html` with subject from JSON; needs **`BUTTONDOWN_API_KEY`**; uses **`status: about_to_send`** + **`X-Buttondown-Live-Dangerously: true`** for sends. Weekly cron: `.github/workflows/weekly-newsletter.yml`.
+- A `uv venv` environment may not have `.venv/bin/pip`; install packages with `/home/cheng-yu/.local/bin/uv pip install --python .venv/bin/python ...` (or `uv sync` if the project uses uv lock workflow).
+- NVIDIA Newsroom RSS items often link to **external** domains (e.g. WSJ); RSS filtering should trust the **feed host** allowlist, not the article URL host.
+- Tavily **page-date** filtering is **on by default**; opt out with `--no-filter-tavily-by-page-date`. **Undated** pages are **dropped** by default; use `--keep-tavily-undated` for lenient behavior. Search API result dicts may include a publish time used as a pre-filter before HTML fetch.
+- Page-date HTML parsing includes **`og:published_time`**, **JSON-LD** `datePublished`, and visible **English** dates (`March 17, 2026` / `17 March 2026`) after stripping `<!-- comments -->` (avoids Webflow “Last Published” in comments).
+- Source config is **`sources.json` only** (no markdown list); `load_sources` expects JSON (`.json`/`.jsonc` or content starting with `{`). Default path is repo root (`--sources` overrides). Per-source **`rss`** and **`feed_hosts`** merge before built-in default RSS URLs in code; duplicate feed URLs dedupe with per-source entries winning.
+- **`newsroom_listing: true`** uses built-in discovery in `newsroom_listings.py` for **`id`** `physicsx`, `neural-concept`, `emmi-ai`, **`siemens`** (en-us sitemap + `<lastmod>`), or **`p1-ai`** (press URLs on `p-1.ai` homepage); complements broad Tavily search the same way per-source RSS does.
+- Each **`SearchHit`** carries **`source_category`** from the source row’s **`category`** when the URL matches a source; compose splits **research** vs **industry** prompt bundles from that (arXiv API hits are always `papers`; unmatched Tavily URLs default to **industry**).
+- Tavily uses **broad** topic keywords (no **`site:`**); by default the **open web** (`--tavily-sources-only` restricts to `sources.json` hosts). **`source_category_for_url`** maps **`papers`** vs **`industry`** when a host matches a source row.
+- **`hit_count`** in `*-search.json` is Tavily hits **after** the page-date HTML filter; **`hits_after_normalize`** is after normalize (+ optional host filter). If **`hits_after_normalize` > 0** and **`hit_count` 0**, undated/outside-window drops—use **`--keep-tavily-undated`** or **`--no-filter-tavily-by-page-date`**.
+- RSS feeds on a hostname **not** listed among source domains need **`feed_hosts`** on that source entry in `sources.json` (e.g. `news.synopsys.com` for Synopsys feeds).
+- Non-arXiv discovery hits are **theme-scored** (ROM/SciML/twins/CAE regexes) before compose; tune `--theme-min-score` / `--theme-backfill-min-score` if industry sections are noisy or too thin. **Physics AI** / **AI physics** in titles counts (newsroom hits often have title-only excerpts).

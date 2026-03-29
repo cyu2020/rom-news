@@ -1,0 +1,63 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://rom-newsletter.local/sources.schema.json",
+  "title": "ROM newsletter sources",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["version", "sources"],
+  "properties": {
+    "$schema": {
+      "type": "string",
+      "description": "Optional JSON Schema pointer for IDE validation."
+    },
+    "version": {
+      "type": "integer",
+      "const": 1,
+      "description": "Schema version; only 1 is supported."
+    },
+    "sources": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "$ref": "#/$defs/sourceEntry" }
+    }
+  },
+  "$defs": {
+    "sourceEntry": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["label", "url"],
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "Stable identifier for diffs and tooling."
+        },
+        "label": { "type": "string", "minLength": 1 },
+        "url": { "type": "string", "minLength": 1, "format": "uri" },
+        "category": {
+          "type": "string",
+          "description": "e.g. papers | industry",
+          "minLength": 1
+        },
+        "kind": {
+          "type": "string",
+          "description": "Tavily query profile: arxiv | nvidia | siemens | ansys | generic (or inferred from URL host).",
+          "minLength": 1
+        },
+        "rss": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Optional RSS/Atom URL merged into the feed list (with built-in defaults in code; deduped by URL)."
+        },
+        "feed_hosts": {
+          "type": "array",
+          "items": { "type": "string", "minLength": 1 },
+          "description": "Extra hostnames allowed for items from this feed (when item links differ from the feed host)."
+        },
+        "newsroom_listing": {
+          "type": "boolean",
+          "description": "When true, use built-in discovery for id physicsx, neural-concept, emmi-ai, siemens, or p1-ai (P-1: press links on p-1.ai homepage) instead of relying on that domain from Tavily alone."
+        }
+      }
+    }
+  }
+}
