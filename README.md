@@ -92,6 +92,32 @@ Outputs (for `--date 2025-03-20`):
 - `dist/newsletter-2025-03-20-search.json` — full discovery audit (window, per-source counts, **`theme_filter`** stats + scored samples, merged URLs)
 - `.rom-newsletter/seen_urls.json` — updated after each successful run (unless `--dry-run-search`). Commit this file if you want deduplication shared across machines; add `.rom-newsletter/` to `.gitignore` if you prefer a local-only ledger.
 
+## Performance
+
+Runs can take **many minutes** when discovery is heavy (arXiv retries, many RSS feeds, newsroom article fetches) or when the **compose** step receives a **large excerpt bundle** (especially with `--no-skip-seen`, high `--arxiv-max`, or many Tavily hits).
+
+### Tips with today’s CLI
+
+- **`--dry-run-search`** — Stops after writing `*-search.json` (no LLM). If this is already slow, time is going to **arXiv / RSS / newsroom / Tavily**; if it is fast but the full run is not, the bottleneck is mostly **compose** (and occasionally JSON repair).
+- **Seen-URL ledger** — Avoid **`--no-skip-seen`** for routine runs so fewer URLs reach the theme filter and the model (smaller prompts, faster generation).
+- **Discovery scope** — Use **`--no-tavily`**, **`--no-arxiv`**, **`--no-rss`**, or **`--no-newsroom`** when you only need part of the pipeline.
+- **Caps** — Lower **`--arxiv-max`** and **`--max-non-arxiv-hits`** to shrink the prompt; raise them only when you need depth.
+- **arXiv** — Tuning **`ROM_NEWSLETTER_ARXIV_READ_TIMEOUT`** and **`ROM_NEWSLETTER_ARXIV_USER_AGENT`** (see table above) can reduce wall time when the API is slow or returning **429**.
+
+### Future improvements (not implemented yet)
+
+Ideas that would speed up or stabilize runs without changing the overall product shape:
+
+| Area | Idea |
+|------|------|
+| **RSS** | Fetch feeds **in parallel** (thread pool or async) instead of strictly sequential HTTP requests; optional per-feed **ETag** / **`If-Modified-Since`** caching to skip unchanged feeds. |
+| **Newsroom** | Fetch multiple **`newsroom_listing`** sources concurrently where safe; cap the number of **article HTML** fetches used only for date resolution, or reuse dates from sitemap/listing when present. |
+| **Compose** | **Truncate or cap** per-hit excerpt length and/or total characters sent to the chat model; optionally **rank** hits and send only the top *N* per category to stay under a token budget. |
+| **Compose** | **Streaming** responses where the API supports it (faster time-to-first-token; less impact on total generation time). |
+| **Compose** | Optional **smaller/faster default model** for weekly cron when quality tradeoffs are acceptable; keep **`--model`** for manual “best” runs. |
+| **Reliability** | Narrower **JSON schema** or constrained decoding to reduce **second-call JSON healing** in `compose`. |
+| **Observability** | Log **phase timings** (arXiv ms, RSS ms, newsroom ms, Tavily ms, compose ms) so slow steps are visible without guessing. |
+
 ## Scheduled runs (GitHub Actions + Buttondown)
 
 The workflow [`.github/workflows/weekly-newsletter.yml`](.github/workflows/weekly-newsletter.yml) runs **every Monday 14:00 UTC** (adjust the `cron` expression if you want a different time or timezone). It:

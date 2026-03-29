@@ -77,7 +77,7 @@ def load_html_and_subject(html_path: Path, json_path: Path) -> tuple[str, str]:
             if isinstance(s, str) and s.strip():
                 subject = s.strip()
     if not subject:
-        subject = "ROM / SciML / digital twins weekly"
+        subject = "Weekly — simulation AI & digital twins"
     return html, subject
 
 

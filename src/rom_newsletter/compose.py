@@ -30,8 +30,8 @@ class MajorSection(BaseModel):
 
 class NewsletterDraft(BaseModel):
     subject: str
-    research_papers: MajorSection
     industry_news: MajorSection
+    research_papers: MajorSection
 
 
 _JSON_FENCE = re.compile(r"```(?:json)?\s*([\s\S]*?)```", re.IGNORECASE)
@@ -92,11 +92,15 @@ Hard rules:
 - Every substantive claim must be traceable to at least one provided URL. Prefer citing by paraphrasing the excerpt, not by guessing details.
 - If excerpts are thin for one track, write shorter subsections there rather than speculating.
 
-Structure — output a single JSON object (no markdown, no prose outside JSON) with exactly this shape:
+Subject line ("subject" field):
+- Under 90 characters. Lead with the week's strongest industry/vendor angles when the Industry News excerpts support them; only foreground research paper titles when industry material is thin.
+- Do NOT use generic series boilerplate such as "ROM/SciML Weekly", "ROM / SciML", or "ROM, SciML, and digital twins weekly". Write a concrete headline (e.g. product/partnership themes, simulation platforms) instead.
+
+Structure — output a single JSON object (no markdown, no prose outside JSON) with exactly this shape (industry_news is listed first to reflect editorial priority):
 {
   "subject": "email subject line, under 90 characters",
-  "research_papers": {
-    "intro": "short intro for the Research Papers block; paragraphs separated by a blank line if needed",
+  "industry_news": {
+    "intro": "short intro for the Industry News block",
     "subsections": [
       {
         "title": "subsection heading",
@@ -105,9 +109,9 @@ Structure — output a single JSON object (no markdown, no prose outside JSON) w
       }
     ]
   },
-  "industry_news": {
-    "intro": "short intro for the Industry News block",
-    "subsections": [ same shape as above ]
+  "research_papers": {
+    "intro": "short intro for the Research Papers block; paragraphs separated by a blank line if needed",
+    "subsections": [ same shape as industry_news subsections ]
   }
 }
 
@@ -123,10 +127,10 @@ Classification (pre-split inputs):
 
     user_prompt = (
         f"Week focus (hint): {week_hint}\n\n"
-        "## Research Papers (excerpts — use only for research_papers JSON)\n"
-        f"{research_bundle}\n\n"
         "## Industry News (excerpts — use only for industry_news JSON)\n"
-        f"{industry_bundle}\n"
+        f"{industry_bundle}\n\n"
+        "## Research Papers (excerpts — use only for research_papers JSON)\n"
+        f"{research_bundle}\n"
     )
 
     def _call(temperature: float = 0.45) -> str:
@@ -172,14 +176,14 @@ def _refine_pass(
 ) -> NewsletterDraft:
     payload = draft.model_dump()
     sys_prompt = """You review a newsletter JSON draft against raw search excerpts only.
-Tasks: remove or soften any claim not clearly supported; fix link lists so every URL appears in excerpts; keep two major sections (research_papers, industry_news) with 1-5 subsections each.
+Tasks: remove or soften any claim not clearly supported; fix link lists so every URL appears in excerpts; keep two major sections (industry_news, research_papers) with 1-5 subsections each. Preserve subject-line rules: no "ROM/SciML Weekly"-style boilerplate; industry-led subject when excerpts support it.
 Reply with a single JSON object of the same schema only. No markdown."""
 
     user_prompt = (
-        "## Research Papers excerpts\n"
-        f"{research_bundle}\n\n"
         "## Industry News excerpts\n"
         f"{industry_bundle}\n\n"
+        "## Research Papers excerpts\n"
+        f"{research_bundle}\n\n"
         "Draft JSON to fix:\n"
         + json.dumps(payload, indent=2)[:80000]
     )
