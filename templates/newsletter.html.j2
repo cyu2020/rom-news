@@ -7,10 +7,8 @@
   <style>
     body { margin: 0; padding: 0; background-color: #f4f2ef; color: #1a1a1a; font-family: Georgia, 'Times New Roman', serif; font-size: 17px; line-height: 1.55; -webkit-text-size-adjust: 100%; }
     .wrap { max-width: 640px; margin: 0 auto; padding: 24px 20px 48px; background-color: #ffffff; }
-    h1 { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; font-size: 1.55rem; font-weight: 600; line-height: 1.25; margin: 0 0 8px; color: #111; letter-spacing: -0.02em; }
-    .meta { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; font-size: 0.85rem; color: #555; margin-bottom: 28px; border-bottom: 1px solid #e5e2dc; padding-bottom: 16px; }
     h2.major { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; font-size: 1.25rem; font-weight: 600; margin: 36px 0 12px; color: #111; letter-spacing: -0.02em; border-bottom: 2px solid #1c3d5c; padding-bottom: 8px; }
-    h2.major:first-of-type { margin-top: 8px; }
+    h2.major:first-of-type { margin-top: 0; }
     .major-intro p { margin: 0 0 12px; }
     h3.sub { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; font-size: 1.05rem; font-weight: 600; margin: 24px 0 8px; color: #1c3d5c; letter-spacing: -0.01em; }
     .section-body { margin: 0 0 10px; }
@@ -20,10 +18,8 @@
   </style>
 </head>
 <body>
+  <!-- Subject and issue date come from the newsletter platform; body starts at section headings. -->
   <div class="wrap">
-    <h1>{{ subject }}</h1>
-    <p class="meta">{{ week_label }}</p>
-
     <h2 class="major">Industry News</h2>
     <div class="major-intro">
 {% for p in industry.intro_paras %}

@@ -38,7 +38,6 @@ def _major_view(ms: MajorSection) -> dict[str, Any]:
 def render_html(
     draft: NewsletterDraft,
     *,
-    week_label: str,
     template_dir: Path | None = None,
 ) -> str:
     base = template_dir or (Path(__file__).resolve().parent.parent.parent / "templates")
@@ -49,7 +48,6 @@ def render_html(
     tpl = env.get_template("newsletter.html.j2")
     return tpl.render(
         subject=draft.subject,
-        week_label=week_label,
         research=_major_view(draft.research_papers),
         industry=_major_view(draft.industry_news),
     )

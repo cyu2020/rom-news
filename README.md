@@ -142,6 +142,7 @@ When the run succeeds, **`dist/`** is uploaded as a workflow artifact. If **Gene
 | **arXiv / API errors** | **503**, **429** (rate limit), or **read timeouts** from `export.arxiv.org`: the client retries with backoff, **`Retry-After`**, a descriptive **User-Agent**, and longer waits for **429**. Set **`ROM_NEWSLETTER_ARXIV_USER_AGENT`** to a unique string for your project in CI. Set **`ROM_NEWSLETTER_ARXIV_READ_TIMEOUT`** if reads are slow. Use **`--no-arxiv`** in the workflow if arXiv stays flaky. |
 | **Node.js 20 deprecation annotations** | The workflow sets **`FORCE_JAVASCRIPT_ACTIONS_TO_NODE24`** and pins newer action versions; warnings can still appear until GitHub changes defaults—see the [GitHub changelog](https://github.blog/changelog/2025-09-19-deprecation-of-node-20-on-github-actions-runners/). |
 | **No artifact / “No files were found”** | Normal if generation failed: **`dist/`** was never created. Fix the failing step first; the artifact upload will not fail the job when `dist/` is absent. |
+| **Buttondown 503 / HTML error page** | Transient outage on Buttondown’s side (response may be Heroku “Application Error” HTML). `rom-newsletter-buttondown` **retries** 429/502/503/504; **re-run the workflow** later or publish locally when `api.buttondown.com` is healthy. |
 
 ## Sources config (`sources.json`)
 

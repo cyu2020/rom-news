@@ -441,7 +441,6 @@ def main(argv: list[str] | None = None) -> None:
 
     html_str = render_html(
         draft,
-        week_label=week_label,
         template_dir=args.template_dir,
     )
     html_path = out_dir / f"{base}.html"

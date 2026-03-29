@@ -5,7 +5,9 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import random
 import sys
+import time
 from pathlib import Path
 from typing import Any
 
@@ -15,6 +17,46 @@ from rom_newsletter.config import get_buttondown_api_key, load_env
 
 BUTTONDOWN_EMAILS_URL = "https://api.buttondown.com/v1/emails"
 FANCY_PREFIX = "<!-- buttondown-editor-mode: fancy -->\n"
+
+# api.buttondown.com can return 503 (often Heroku "Application Error" HTML) during incidents; retry.
+_RETRYABLE_STATUS = frozenset({429, 502, 503, 504})
+_MAX_ATTEMPTS = 6
+_RETRY_BASE_SEC = 2.0
+
+
+def _retry_after_seconds(response: httpx.Response) -> float | None:
+    raw = (response.headers.get("Retry-After") or "").strip()
+    if raw.isdigit():
+        return float(raw)
+    return None
+
+
+def _post_emails_with_retries(
+    client: httpx.Client,
+    *,
+    url: str,
+    json_body: dict[str, Any],
+    headers: dict[str, str],
+) -> httpx.Response:
+    for attempt in range(_MAX_ATTEMPTS):
+        try:
+            r = client.post(url, json=json_body, headers=headers)
+        except httpx.TimeoutException:
+            if attempt < _MAX_ATTEMPTS - 1:
+                delay = _RETRY_BASE_SEC * (2**attempt) + random.uniform(0, 0.5)
+                time.sleep(delay)
+                continue
+            raise
+        if r.status_code in _RETRYABLE_STATUS and attempt < _MAX_ATTEMPTS - 1:
+            delay = _RETRY_BASE_SEC * (2**attempt) + random.uniform(0, 0.5)
+            if r.status_code == 429:
+                ra = _retry_after_seconds(r)
+                if ra is not None:
+                    delay = max(delay, ra)
+            time.sleep(delay)
+            continue
+        r.raise_for_status()
+        return r
 
 
 def newsletter_paths(output_dir: Path, stamp: str) -> tuple[Path, Path]:
@@ -71,9 +113,14 @@ def publish_to_buttondown(
         "body": body,
         "status": "draft" if draft else "about_to_send",
     }
-    with httpx.Client(timeout=timeout) as client:
-        r = client.post(BUTTONDOWN_EMAILS_URL, json=payload, headers=headers)
-        r.raise_for_status()
+    client_timeout = httpx.Timeout(connect=20.0, read=timeout, write=30.0, pool=60.0)
+    with httpx.Client(timeout=client_timeout) as client:
+        r = _post_emails_with_retries(
+            client,
+            url=BUTTONDOWN_EMAILS_URL,
+            json_body=payload,
+            headers=headers,
+        )
         return r.json()
 
 
@@ -135,7 +182,21 @@ def main(argv: list[str] | None = None) -> None:
     except httpx.HTTPStatusError as e:
         print(f"Buttondown API error: {e}", file=sys.stderr)
         if e.response is not None:
-            print(e.response.text[:4000], file=sys.stderr)
+            text = e.response.text[:4000]
+            if "<html" in text.lower() or "heroku" in text.lower():
+                print(
+                    "(Response was HTML—often a temporary 503 from Buttondown's host; "
+                    f"retries already attempted ({_MAX_ATTEMPTS}). Re-run the workflow later.)",
+                    file=sys.stderr,
+                )
+            else:
+                print(text, file=sys.stderr)
+        sys.exit(1)
+    except httpx.TimeoutException as e:
+        print(
+            f"Buttondown API timed out after {_MAX_ATTEMPTS} attempts: {e}. Retry later.",
+            file=sys.stderr,
+        )
         sys.exit(1)
     eid = out.get("id", "?")
     st = out.get("status", "?")
