@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import random
 import time
 import xml.etree.ElementTree as ET
@@ -8,13 +9,14 @@ from typing import Any
 
 import httpx
 
+from rom_newsletter.config import load_env
 from rom_newsletter.sources import CATEGORY_PAPERS
 from rom_newsletter.search import SearchHit
 
 ARXIV_API = "https://export.arxiv.org/api/query"
 _ATOM = "{http://www.w3.org/2005/Atom}"
 
-# arXiv occasionally returns 503/502/504; brief backoff retries usually succeed.
+# arXiv occasionally returns 503/502/504 or is slow to stream the Atom XML; backoff retries help.
 _RETRYABLE_STATUS = frozenset({429, 502, 503, 504})
 _MAX_ATTEMPTS = 5
 _RETRY_BASE_SEC = 1.0
@@ -26,7 +28,14 @@ def _get_arxiv_api(
     params: dict[str, Any],
 ) -> httpx.Response:
     for attempt in range(_MAX_ATTEMPTS):
-        r = client.get(ARXIV_API, params=params)
+        try:
+            r = client.get(ARXIV_API, params=params)
+        except httpx.TimeoutException:
+            if attempt < _MAX_ATTEMPTS - 1:
+                delay = _RETRY_BASE_SEC * (2**attempt) + random.uniform(0, 0.35)
+                time.sleep(delay)
+                continue
+            raise
         if r.status_code in _RETRYABLE_STATUS and attempt < _MAX_ATTEMPTS - 1:
             delay = _RETRY_BASE_SEC * (2**attempt) + random.uniform(0, 0.35)
             time.sleep(delay)
@@ -103,9 +112,17 @@ def fetch_arxiv_hits(
     end: datetime,
     *,
     max_results: int = 25,
-    timeout: float = 60.0,
+    timeout: float = 180.0,
 ) -> tuple[list[SearchHit], dict[str, Any]]:
-    """Query arXiv API with submittedDate filter; returns hits + raw metadata."""
+    """Query arXiv API with submittedDate filter; returns hits + raw metadata.
+
+    *timeout* is the **read** timeout in seconds (export.arxiv.org can be slow; CI may need 120s+).
+    If ``ROM_NEWSLETTER_ARXIV_READ_TIMEOUT`` is set in the environment (after ``load_env()``), it overrides *timeout*.
+    """
+    load_env()
+    read_sec = timeout
+    if (raw := os.environ.get("ROM_NEWSLETTER_ARXIV_READ_TIMEOUT", "").strip()):
+        read_sec = float(raw)
     q = build_arxiv_search_query(start, end)
     params = {
         "search_query": q,
@@ -115,7 +132,9 @@ def fetch_arxiv_hits(
         "sortOrder": "descending",
     }
     kw = "arxiv-api:submittedDate"
-    with httpx.Client(timeout=timeout, follow_redirects=True) as client:
+    # Long read timeout; short connect so dead connections fail fast.
+    client_timeout = httpx.Timeout(connect=20.0, read=read_sec, write=30.0, pool=60.0)
+    with httpx.Client(timeout=client_timeout, follow_redirects=True) as client:
         try:
             r = _get_arxiv_api(client, params=params)
         except httpx.HTTPStatusError as e:
@@ -125,6 +144,11 @@ def fetch_arxiv_hits(
                     "(their export service is often overloaded). Retry in a few minutes, or use --no-arxiv."
                 ) from e
             raise
+        except httpx.TimeoutException as e:
+            raise RuntimeError(
+                f"arXiv API timed out after {_MAX_ATTEMPTS} attempts (read timeout {read_sec}s per try). "
+                "Retry later, set ROM_NEWSLETTER_ARXIV_READ_TIMEOUT, or use --no-arxiv."
+            ) from e
         body = r.text
     root = ET.fromstring(body)
     hits: list[SearchHit] = []

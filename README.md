@@ -31,6 +31,7 @@ Optional environment variables:
 | `ROM_NEWSLETTER_MODEL` | Default chat model (default `grok-4-fast`) |
 | `BUTTONDOWN_API_KEY` | Buttondown token for `rom-newsletter-buttondown` (local or CI) |
 | `BUTTONDOWN_API_VERSION` | Optional `X-API-Version` for Buttondown (e.g. `2026-04-01`) |
+| `ROM_NEWSLETTER_ARXIV_READ_TIMEOUT` | Override arXiv HTTP **read** timeout in seconds (default **180**; raise in CI if `export.arxiv.org` is slow) |
 
 ## Usage
 
@@ -128,7 +129,16 @@ Optional env **`BUTTONDOWN_API_VERSION`** (e.g. `2026-04-01`) is passed as `X-AP
 
 The publish step sends **`X-Buttondown-Live-Dangerously: true`** so the first programmatic send to subscribers under newer API versions succeeds, and so edge-case HTML is accepted (see [creating an email](https://docs.buttondown.com/api-emails-create)).
 
-Failed runs still upload **`dist/`** as a workflow artifact for debugging.
+When the run succeeds, **`dist/`** is uploaded as a workflow artifact. If **Generate newsletter** fails before writing files, there may be nothing to upload; the workflow is configured to **ignore** a missing `dist/` folder so the job does not fail twice.
+
+### Troubleshooting workflow failures
+
+| Symptom | What to check |
+|---------|----------------|
+| **Process completed with exit code 1** | Open the **Generate newsletter** step log (that is usually what failed). Confirm **`AI_BUILDER_TOKEN`** is set under Actions secrets and matches a valid token. Run the same command locally with the same `--date`. |
+| **arXiv / API errors** | Transient **503** or **read timeouts** from `export.arxiv.org` can fail the step; the client retries with backoff and uses a **180s** read timeout by default. Set **`ROM_NEWSLETTER_ARXIV_READ_TIMEOUT`** (e.g. `300`) in Actions env or repo variables, or retry the workflow. See `--no-arxiv` to skip arXiv. |
+| **Node.js 20 deprecation annotations** | The workflow sets **`FORCE_JAVASCRIPT_ACTIONS_TO_NODE24`** and pins newer action versions; warnings can still appear until GitHub changes defaults—see the [GitHub changelog](https://github.blog/changelog/2025-09-19-deprecation-of-node-20-on-github-actions-runners/). |
+| **No artifact / “No files were found”** | Normal if generation failed: **`dist/`** was never created. Fix the failing step first; the artifact upload will not fail the job when `dist/` is absent. |
 
 ## Sources config (`sources.json`)
 
