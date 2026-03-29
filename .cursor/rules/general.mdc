@@ -16,7 +16,7 @@ During your interaction with the user, if you find anything reusable in this pro
 - Always use `/home/cheng-yu/.local/bin/uv pip install` to install any new packages needed.
 
 ## Cursor learned
-- **arXiv** `export.arxiv.org` often returns **503** or **slow reads**; `arxiv_client` retries 429/502/503/504 and **read timeouts** (up to 5 attempts); default read timeout **180s**; override with **`ROM_NEWSLETTER_ARXIV_READ_TIMEOUT`**; if it still fails, **`--no-arxiv`**.
+- **arXiv** `export.arxiv.org` often returns **503**, **429**, or **slow reads**; `arxiv_client` sends a proper **User-Agent**, retries with **`Retry-After`** and long backoff for **429**; default read timeout **180s** (`ROM_NEWSLETTER_ARXIV_READ_TIMEOUT`); optional **`ROM_NEWSLETTER_ARXIV_USER_AGENT`** for CI; if it still fails, **`--no-arxiv`**.
 - **Buttondown:** `rom-newsletter-buttondown` posts `dist/newsletter-<date>.html` with subject from JSON; needs **`BUTTONDOWN_API_KEY`**; uses **`status: about_to_send`** + **`X-Buttondown-Live-Dangerously: true`** for sends. Weekly cron: `.github/workflows/weekly-newsletter.yml`.
 - A `uv venv` environment may not have `.venv/bin/pip`; install packages with `/home/cheng-yu/.local/bin/uv pip install --python .venv/bin/python ...` (or `uv sync` if the project uses uv lock workflow).
 - NVIDIA Newsroom RSS items often link to **external** domains (e.g. WSJ); RSS filtering should trust the **feed host** allowlist, not the article URL host.

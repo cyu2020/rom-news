@@ -32,6 +32,7 @@ Optional environment variables:
 | `BUTTONDOWN_API_KEY` | Buttondown token for `rom-newsletter-buttondown` (local or CI) |
 | `BUTTONDOWN_API_VERSION` | Optional `X-API-Version` for Buttondown (e.g. `2026-04-01`) |
 | `ROM_NEWSLETTER_ARXIV_READ_TIMEOUT` | Override arXiv HTTP **read** timeout in seconds (default **180**; raise in CI if `export.arxiv.org` is slow) |
+| `ROM_NEWSLETTER_ARXIV_USER_AGENT` | Custom `User-Agent` for arXiv API calls ([API manual](https://arxiv.org/help/api/user-manual)); helps avoid **429** rate limits from shared IPs (e.g. GitHub Actions) |
 
 ## Usage
 
@@ -115,6 +116,8 @@ The workflow [`.github/workflows/weekly-newsletter.yml`](.github/workflows/weekl
 6. **Test early** — **Actions** → **Weekly newsletter** → **Run workflow**. Optionally set **week end date** to a `YYYY-MM-DD` you have already validated locally; leave it empty to use “last Sunday UTC” (same as the scheduled run).
 7. **Scheduled runs caveat** — GitHub may **disable** scheduled workflows on repositories with **no activity** for a long time; the schedule is **best-effort** and can drift slightly.
 
+8. **arXiv in CI (optional)** — If `export.arxiv.org` returns **429** from GitHub’s shared IPs, add a repository **variable** **`ROM_NEWSLETTER_ARXIV_USER_AGENT`** (Settings → Secrets and variables → Actions → Variables) with a unique string (your repo URL or contact). The weekly workflow passes it into the generate step automatically.
+
 **Manual run (after setup):** Actions → *Weekly newsletter* → *Run workflow* → optional **week end date** ISO `YYYY-MM-DD` (overrides the default “last Sunday UTC”).
 
 **Upload HTML locally after a normal run** (requires `BUTTONDOWN_API_KEY` in `.env` or the environment):
@@ -136,7 +139,7 @@ When the run succeeds, **`dist/`** is uploaded as a workflow artifact. If **Gene
 | Symptom | What to check |
 |---------|----------------|
 | **Process completed with exit code 1** | Open the **Generate newsletter** step log (that is usually what failed). Confirm **`AI_BUILDER_TOKEN`** is set under Actions secrets and matches a valid token. Run the same command locally with the same `--date`. |
-| **arXiv / API errors** | Transient **503** or **read timeouts** from `export.arxiv.org` can fail the step; the client retries with backoff and uses a **180s** read timeout by default. Set **`ROM_NEWSLETTER_ARXIV_READ_TIMEOUT`** (e.g. `300`) in Actions env or repo variables, or retry the workflow. See `--no-arxiv` to skip arXiv. |
+| **arXiv / API errors** | **503**, **429** (rate limit), or **read timeouts** from `export.arxiv.org`: the client retries with backoff, **`Retry-After`**, a descriptive **User-Agent**, and longer waits for **429**. Set **`ROM_NEWSLETTER_ARXIV_USER_AGENT`** to a unique string for your project in CI. Set **`ROM_NEWSLETTER_ARXIV_READ_TIMEOUT`** if reads are slow. Use **`--no-arxiv`** in the workflow if arXiv stays flaky. |
 | **Node.js 20 deprecation annotations** | The workflow sets **`FORCE_JAVASCRIPT_ACTIONS_TO_NODE24`** and pins newer action versions; warnings can still appear until GitHub changes defaults—see the [GitHub changelog](https://github.blog/changelog/2025-09-19-deprecation-of-node-20-on-github-actions-runners/). |
 | **No artifact / “No files were found”** | Normal if generation failed: **`dist/`** was never created. Fix the failing step first; the artifact upload will not fail the job when `dist/` is absent. |
 

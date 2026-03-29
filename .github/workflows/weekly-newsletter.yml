@@ -52,6 +52,8 @@ jobs:
       - name: Generate newsletter
         env:
           AI_BUILDER_TOKEN: ${{ secrets.AI_BUILDER_TOKEN }}
+          # Optional repo variable: unique User-Agent reduces arXiv 429 rate limits from shared CI IPs.
+          ROM_NEWSLETTER_ARXIV_USER_AGENT: ${{ vars.ROM_NEWSLETTER_ARXIV_USER_AGENT }}
         run: |
           .venv/bin/rom-newsletter --date "$WEEK_END" --no-skip-seen --output-dir dist --no-tavily
 

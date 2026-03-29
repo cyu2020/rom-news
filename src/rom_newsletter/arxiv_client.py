@@ -16,10 +16,48 @@ from rom_newsletter.search import SearchHit
 ARXIV_API = "https://export.arxiv.org/api/query"
 _ATOM = "{http://www.w3.org/2005/Atom}"
 
-# arXiv occasionally returns 503/502/504 or is slow to stream the Atom XML; backoff retries help.
+# arXiv occasionally returns 503/502/504/429 or is slow to stream the Atom XML; backoff retries help.
 _RETRYABLE_STATUS = frozenset({429, 502, 503, 504})
-_MAX_ATTEMPTS = 5
+_MAX_ATTEMPTS = 8
 _RETRY_BASE_SEC = 1.0
+
+
+def _arxiv_default_user_agent() -> str:
+    """arXiv asks for a identifying User-Agent (see https://arxiv.org/help/api/user-manual)."""
+    return (
+        "rom-newsletter/0.1 "
+        "(+https://arxiv.org/help/api/user-manual#Quickstart; open-source newsletter generator)"
+    )
+
+
+def _arxiv_request_headers() -> dict[str, str]:
+    load_env()
+    ua = os.environ.get("ROM_NEWSLETTER_ARXIV_USER_AGENT", "").strip()
+    if not ua:
+        ua = _arxiv_default_user_agent()
+    return {"User-Agent": ua}
+
+
+def _retry_after_seconds(response: httpx.Response) -> float | None:
+    raw = (response.headers.get("Retry-After") or "").strip()
+    if not raw or not raw.isdigit():
+        return None
+    return float(raw)
+
+
+def _backoff_seconds_for_status(
+    attempt: int, status_code: int, response: httpx.Response
+) -> float:
+    """429 needs much longer waits than 502/503; honor Retry-After when present."""
+    base = _RETRY_BASE_SEC * (2**attempt) + random.uniform(0, 0.35)
+    if status_code != 429:
+        return base
+    ra = _retry_after_seconds(response)
+    if ra is not None:
+        return min(max(base, ra, 5.0), 600.0)
+    # Shared CI IPs are often rate-limited; cap per-wait so the job does not run for hours.
+    long_wait = max(base, 45.0 * (2**attempt) + random.uniform(0, 15.0))
+    return min(long_wait, 180.0)
 
 
 def _get_arxiv_api(
@@ -37,7 +75,7 @@ def _get_arxiv_api(
                 continue
             raise
         if r.status_code in _RETRYABLE_STATUS and attempt < _MAX_ATTEMPTS - 1:
-            delay = _RETRY_BASE_SEC * (2**attempt) + random.uniform(0, 0.35)
+            delay = _backoff_seconds_for_status(attempt, r.status_code, r)
             time.sleep(delay)
             continue
         r.raise_for_status()
@@ -134,14 +172,25 @@ def fetch_arxiv_hits(
     kw = "arxiv-api:submittedDate"
     # Long read timeout; short connect so dead connections fail fast.
     client_timeout = httpx.Timeout(connect=20.0, read=read_sec, write=30.0, pool=60.0)
-    with httpx.Client(timeout=client_timeout, follow_redirects=True) as client:
+    headers = _arxiv_request_headers()
+    with httpx.Client(
+        timeout=client_timeout,
+        headers=headers,
+        follow_redirects=True,
+    ) as client:
         try:
             r = _get_arxiv_api(client, params=params)
         except httpx.HTTPStatusError as e:
             if e.response is not None and e.response.status_code in _RETRYABLE_STATUS:
+                extra = ""
+                if e.response.status_code == 429:
+                    extra = (
+                        " Rate limits are stricter from shared IPs (e.g. GitHub Actions); "
+                        "set ROM_NEWSLETTER_ARXIV_USER_AGENT to something unique, wait, or use --no-arxiv."
+                    )
                 raise RuntimeError(
-                    f"arXiv API returned HTTP {e.response.status_code} after {_MAX_ATTEMPTS} attempts "
-                    "(their export service is often overloaded). Retry in a few minutes, or use --no-arxiv."
+                    f"arXiv API returned HTTP {e.response.status_code} after {_MAX_ATTEMPTS} attempts."
+                    f"{extra}"
                 ) from e
             raise
         except httpx.TimeoutException as e:
