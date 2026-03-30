@@ -336,6 +336,7 @@ def pipeline_report_json(
     merged_hits: list[SearchHit],
     skipped_seen: int,
     theme_filter: dict[str, Any] | None = None,
+    phase_timings_ms: dict[str, float] | None = None,
 ) -> str:
     """Full discovery audit: arXiv API + RSS + newsroom listings + Tavily + merge."""
     payload: dict[str, Any] = {
@@ -361,4 +362,6 @@ def pipeline_report_json(
     }
     if theme_filter is not None:
         payload["theme_filter"] = theme_filter
+    if phase_timings_ms:
+        payload["phase_timings_ms"] = phase_timings_ms
     return json.dumps(payload, indent=2, ensure_ascii=False)

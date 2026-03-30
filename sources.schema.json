@@ -55,7 +55,7 @@
         },
         "newsroom_listing": {
           "type": "boolean",
-          "description": "When true, use built-in discovery for id physicsx, neural-concept, emmi-ai, siemens, or p1-ai (P-1: press links on p-1.ai homepage) instead of relying on that domain from Tavily alone."
+          "description": "When true, use built-in discovery for id physicsx, neural-concept, emmi-ai, siemens, p1-ai, luminary, vinci4d, or akselos (see newsroom_listings.py) instead of relying on that domain from Tavily alone."
         }
       }
     }

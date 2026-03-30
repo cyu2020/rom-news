@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import json
 import sys
+import time
 from datetime import date
 from pathlib import Path
 
@@ -44,6 +45,30 @@ def _parse_date(s: str | None) -> date:
     if not s:
         return date.today()
     return date.fromisoformat(s)
+
+
+def _elapsed_ms(start: float) -> float:
+    return (time.perf_counter() - start) * 1000.0
+
+
+def _log_phase_timings(
+    *,
+    arxiv_ms: float,
+    rss_ms: float,
+    newsroom_ms: float,
+    tavily_ms: float,
+    compose_ms: float | None = None,
+) -> None:
+    """Wall-clock ms per pipeline phase (stderr; discovery order matches run)."""
+    parts = [
+        f"arXiv={arxiv_ms:.0f}ms",
+        f"RSS={rss_ms:.0f}ms",
+        f"newsroom={newsroom_ms:.0f}ms",
+        f"Tavily={tavily_ms:.0f}ms",
+    ]
+    if compose_ms is not None:
+        parts.append(f"compose={compose_ms:.0f}ms")
+    print("rom-newsletter phase timings: " + " ".join(parts), file=sys.stderr)
 
 
 def _has_arxiv(sources: list) -> bool:
@@ -271,17 +296,22 @@ def main(argv: list[str] | None = None) -> None:
     history_path = args.history_file or (root / ".rom-newsletter" / "seen_urls.json")
     seen: set[str] = set() if args.no_skip_seen else load_seen_urls(history_path)
 
+    arxiv_ms = rss_ms = newsroom_ms = tavily_ms = 0.0
+
     arxiv_meta: dict | None = None
     arxiv_hits: list = []
     if not args.no_arxiv and _has_arxiv(sources):
+        t_arxiv = time.perf_counter()
         arxiv_hits, arxiv_meta = fetch_arxiv_hits(
             start_utc, end_utc, max_results=arxiv_max
         )
+        arxiv_ms = _elapsed_ms(t_arxiv)
         arxiv_meta = {**(arxiv_meta or {}), "hit_count": len(arxiv_hits)}
 
     rss_meta: dict | None = None
     rss_hits: list = []
     if not args.no_rss:
+        t_rss = time.perf_counter()
         feed_entries = _collect_feed_entries(sources)
         rss_hits, rss_errors = fetch_rss_hits(
             feed_entries,
@@ -290,6 +320,7 @@ def main(argv: list[str] | None = None) -> None:
             allowed_feed_hosts=allow,
             feed_url_category=feed_url_to_category_map(sources),
         )
+        rss_ms = _elapsed_ms(t_rss)
         rss_meta = {
             "hit_count": len(rss_hits),
             "errors": rss_errors,
@@ -306,6 +337,7 @@ def main(argv: list[str] | None = None) -> None:
     tavily_hits_after_normalize = 0
     keywords = build_tavily_keywords(sources, include_arxiv_web=False)
     if not args.no_tavily and keywords:
+        t_tavily = time.perf_counter()
         token = get_token()
         search_json = run_search(token, keywords, max_results=max_results)
         filter_tavily_page_date = not args.no_filter_tavily_by_page_date
@@ -329,12 +361,14 @@ def main(argv: list[str] | None = None) -> None:
                 timeout=args.tavily_date_timeout,
                 drop_undated=not args.keep_tavily_undated,
             )
+        tavily_ms = _elapsed_ms(t_tavily)
     elif not args.no_tavily and not keywords:
         print("No Tavily keywords (empty sources?); skipping web search.", file=sys.stderr)
 
     newsroom_hits: list = []
     newsroom_meta: dict | None = None
     if not args.no_newsroom:
+        t_newsroom = time.perf_counter()
         newsroom_hits, newsroom_meta = fetch_newsroom_hits(
             sources,
             start_utc,
@@ -342,6 +376,7 @@ def main(argv: list[str] | None = None) -> None:
             timeout=max(5.0, args.tavily_date_timeout),
             max_workers=max(2, min(32, args.tavily_date_workers)),
         )
+        newsroom_ms = _elapsed_ms(t_newsroom)
 
     merged = merge_hits_ordered(arxiv_hits, rss_hits, newsroom_hits, tavily_hits)
     merged, skipped_seen = filter_unseen(merged, seen)
@@ -388,6 +423,13 @@ def main(argv: list[str] | None = None) -> None:
             file=sys.stderr,
         )
 
+    phase_timings_ms = {
+        "arxiv": round(arxiv_ms, 1),
+        "rss": round(rss_ms, 1),
+        "newsroom": round(newsroom_ms, 1),
+        "tavily": round(tavily_ms, 1),
+    }
+
     report = pipeline_report_json(
         window=window_meta,
         arxiv=arxiv_meta,
@@ -397,6 +439,7 @@ def main(argv: list[str] | None = None) -> None:
         merged_hits=merged,
         skipped_seen=skipped_seen,
         theme_filter=theme_stats,
+        phase_timings_ms=phase_timings_ms,
     )
 
     base = f"newsletter-{stamp}"
@@ -409,6 +452,13 @@ def main(argv: list[str] | None = None) -> None:
             print(f"  {e}", file=sys.stderr)
 
     if args.dry_run_search:
+        _log_phase_timings(
+            arxiv_ms=arxiv_ms,
+            rss_ms=rss_ms,
+            newsroom_ms=newsroom_ms,
+            tavily_ms=tavily_ms,
+            compose_ms=None,
+        )
         print(f"Window (UTC): {window_meta['start']} .. {window_meta['end']}")
         print(
             f"arXiv hits: {len(arxiv_hits)}  RSS hits: {len(rss_hits)}  "
@@ -424,6 +474,7 @@ def main(argv: list[str] | None = None) -> None:
 
     research_bundle, industry_bundle = hits_to_split_bundle_text(merged)
     client = openai_client()
+    t_compose = time.perf_counter()
     draft = compose_newsletter(
         client,
         model=model,
@@ -431,6 +482,14 @@ def main(argv: list[str] | None = None) -> None:
         industry_bundle=industry_bundle,
         week_hint=week_label,
         refine=args.refine,
+    )
+    compose_ms = _elapsed_ms(t_compose)
+    _log_phase_timings(
+        arxiv_ms=arxiv_ms,
+        rss_ms=rss_ms,
+        newsroom_ms=newsroom_ms,
+        tavily_ms=tavily_ms,
+        compose_ms=compose_ms,
     )
 
     json_path = out_dir / f"{base}.json"

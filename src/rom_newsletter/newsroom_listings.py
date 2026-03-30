@@ -1,7 +1,10 @@
-"""Fetch article URLs from vendor newsroom listing pages (Webflow HTML or sitemaps).
+"""Fetch article URLs from vendor newsroom listing pages (Webflow HTML, sitemaps, or static site cards).
 
 Complements broad Tavily search for sources with ``newsroom_listing: true`` in ``sources.json``
 (same idea as per-source RSS: direct discovery for that vendor).
+
+Supported ``sources.json`` ``id`` values: ``physicsx``, ``neural-concept``, ``emmi-ai``, ``siemens``,
+``p1-ai``, ``luminary``, ``vinci4d``, ``akselos``.
 """
 
 from __future__ import annotations
@@ -244,6 +247,120 @@ def parse_emmi_news(html: str) -> list[tuple[str, str, None]]:
     return out
 
 
+def _parse_luminary_mmddyyyy(s: str) -> datetime | None:
+    m = re.match(r"^(\d{2})\.(\d{2})\.(\d{4})$", s.strip())
+    if not m:
+        return None
+    mo, d, y = int(m.group(1)), int(m.group(2)), int(m.group(3))
+    try:
+        return datetime(y, mo, d, tzinfo=timezone.utc)
+    except ValueError:
+        return None
+
+
+def parse_luminary_press_resources(
+    html: str, listing_url: str
+) -> list[tuple[str, str, datetime | None]]:
+    """Luminary Astro listing: cards with ``data-tag="Press"``, MM.DD.YYYY date, ``/resources/...`` links."""
+    base = f"{urlparse(listing_url).scheme}://{urlparse(listing_url).netloc}"
+    out: list[tuple[str, str, datetime | None]] = []
+    seen: set[str] = set()
+    for m in re.finditer(
+        r'data-tag="Press"[^>]*>\s*<a href="(/resources/[^"]+)"[^>]*>'
+        r".*?<span>(\d{2}\.\d{2}\.\d{4})</span>"
+        r".*?<h3[^>]*>([^<]+)</h3>",
+        html,
+        re.DOTALL | re.I,
+    ):
+        path = m.group(1).split("?")[0]
+        url = urljoin(base, path)
+        if url in seen:
+            continue
+        seen.add(url)
+        dt = _parse_luminary_mmddyyyy(m.group(2))
+        title = re.sub(r"\s+", " ", m.group(3).strip())
+        out.append((url, title[:500], dt))
+    return out
+
+
+def _vinci_title_from_url(url: str) -> str:
+    try:
+        path = urlparse(url).path.rstrip("/")
+        slug = path.split("/")[-1] or path or url
+        slug = unquote(slug)
+        t = slug.replace("-", " ").replace("_", " ").strip()
+        return t[:500] if t else url
+    except Exception:
+        return url
+
+
+def parse_vinci_news_listing(html: str) -> list[tuple[str, str, None]]:
+    """WordPress news index: article URLs under ``/news/<slug>/``."""
+    out: list[tuple[str, str, None]] = []
+    seen: set[str] = set()
+    for m in re.finditer(
+        r'href="(https://www\.getvinci\.ai/news/[^"?#]+)"',
+        html,
+        re.I,
+    ):
+        raw = m.group(1).strip().rstrip("/")
+        if raw.endswith("/news"):
+            continue
+        url = raw + "/"
+        if url in seen:
+            continue
+        seen.add(url)
+        out.append((url, _vinci_title_from_url(url), None))
+    return out
+
+
+# Single-path posts on akselos.com news/resources listing (exclude site chrome).
+_AKSELOS_SINGLE_SEGMENT_SKIP = frozenset(
+    {
+        "contact-us",
+        "feed",
+        "privacy",
+        "resources",
+        "software-release-notes",
+        "spm",
+        "wind-power",
+        "our-commitment-to-cybersecurity",
+        "wp-json",
+        "xmlrpc.php",
+    }
+)
+
+
+def parse_akselos_resources_news(html: str, listing_url: str) -> list[tuple[str, str, None]]:
+    """Resource hub with News filter: article URLs as ``/slug/`` (single segment), not white papers."""
+    out: list[tuple[str, str, None]] = []
+    seen: set[str] = set()
+    for m in re.finditer(r'href="(https?://(?:www\.)?akselos\.com/[^"?#]+)', html, re.I):
+        raw = m.group(1).strip().rstrip("/")
+        try:
+            p = urlparse(raw)
+        except ValueError:
+            continue
+        h = (p.netloc or "").lower()
+        if h.removeprefix("www.") != "akselos.com":
+            continue
+        parts = [x for x in p.path.strip("/").split("/") if x]
+        if len(parts) != 1:
+            continue
+        seg = parts[0].lower()
+        if seg in _AKSELOS_SINGLE_SEGMENT_SKIP:
+            continue
+        if seg.endswith((".php", ".xml")):
+            continue
+        url = urljoin(f"https://akselos.com/", parts[0] + "/")
+        if url in seen:
+            continue
+        seen.add(url)
+        title = parts[0].replace("-", " ").replace("_", " ").strip().title()[:500]
+        out.append((url, title, None))
+    return out
+
+
 def _parser_for_source_id(sid: str | None) -> str | None:
     return {
         "physicsx": "physicsx",
@@ -251,6 +368,9 @@ def _parser_for_source_id(sid: str | None) -> str | None:
         "emmi-ai": "emmi",
         "siemens": "siemens",
         "p1-ai": "p1_ai",
+        "luminary": "luminary",
+        "vinci4d": "vinci",
+        "akselos": "akselos",
     }.get((sid or "").strip())
 
 
@@ -277,7 +397,10 @@ def fetch_newsroom_hits(
             errors.append(
                 {
                     "id": s.id or "",
-                    "error": "newsroom_listing requires id physicsx | neural-concept | emmi-ai | siemens | p1-ai",
+                    "error": (
+                        "newsroom_listing requires id physicsx | neural-concept | emmi-ai | "
+                        "siemens | p1-ai | luminary | vinci4d | akselos"
+                    ),
                 }
             )
             continue
@@ -305,6 +428,12 @@ def fetch_newsroom_hits(
             candidates = parse_siemens_news_sitemap(html)
         elif pid == "p1_ai":
             candidates = parse_p1_ai_homepage(html)
+        elif pid == "luminary":
+            candidates = parse_luminary_press_resources(html, s.url)
+        elif pid == "vinci":
+            candidates = parse_vinci_news_listing(html)
+        elif pid == "akselos":
+            candidates = parse_akselos_resources_news(html, s.url)
         else:
             candidates = parse_emmi_news(html)
 

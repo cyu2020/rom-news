@@ -66,6 +66,30 @@
       "newsroom_listing": true
     },
     {
+      "id": "luminary",
+      "label": "Luminary",
+      "url": "https://luminary.ai/resources/?filter=Press",
+      "category": "industry",
+      "kind": "generic",
+      "newsroom_listing": true
+    },
+    {
+      "id": "vinci4d",
+      "label": "Vinci4D",
+      "url": "https://www.getvinci.ai/news/",
+      "category": "industry",
+      "kind": "generic",
+      "newsroom_listing": true
+    },
+    {
+      "id": "akselos",
+      "label": "Akselos",
+      "url": "https://akselos.com/resources/?sort=relevance&category=1",
+      "category": "industry",
+      "kind": "generic",
+      "newsroom_listing": true
+    },
+    {
       "id": "synopsys-simulation-rss",
       "label": "Synopsys (Simulation & Analysis RSS)",
       "url": "https://news.synopsys.com/",
