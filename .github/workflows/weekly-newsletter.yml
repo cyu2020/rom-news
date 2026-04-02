@@ -1,4 +1,4 @@
-# Weekly: generate newsletter (no Tavily, no seen-url skip) and publish HTML to Buttondown.
+# Weekly: generate newsletter (no seen-url skip) and publish HTML to Buttondown.
 # Cron is UTC — adjust if you want a specific local Monday.
 
 name: Weekly newsletter
@@ -55,7 +55,7 @@ jobs:
           # Optional repo variable: unique User-Agent reduces arXiv 429 rate limits from shared CI IPs.
           ROM_NEWSLETTER_ARXIV_USER_AGENT: ${{ vars.ROM_NEWSLETTER_ARXIV_USER_AGENT }}
         run: |
-          .venv/bin/rom-newsletter --date "$WEEK_END" --no-skip-seen --output-dir dist --no-tavily
+          .venv/bin/rom-newsletter --date "$WEEK_END" --no-skip-seen --output-dir dist
 
       - name: Publish to Buttondown
         env:

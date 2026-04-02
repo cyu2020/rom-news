@@ -13,22 +13,18 @@ from rom_newsletter.compose import (
     newsletter_to_json_dict,
     openai_client,
 )
-from rom_newsletter.config import default_model, get_token, project_root
+from rom_newsletter.config import default_model, project_root
 from rom_newsletter.dates import utc_window_for_week
 from rom_newsletter.history import load_seen_urls, merge_history
 from rom_newsletter.newsroom_listings import fetch_newsroom_hits
-from rom_newsletter.page_dates import filter_tavily_hits_by_page_date
 from rom_newsletter.relevance import apply_theme_filter
 from rom_newsletter.render import render_html
 from rom_newsletter.rss_client import DEFAULT_FEED_URLS, fetch_rss_hits
 from rom_newsletter.search import (
-    build_tavily_keywords,
     filter_unseen,
     hits_to_split_bundle_text,
     merge_hits_ordered,
-    normalize_hits,
     pipeline_report_json,
-    run_search,
 )
 from rom_newsletter.sources import (
     KIND_ARXIV,
@@ -39,6 +35,7 @@ from rom_newsletter.sources import (
     load_sources,
     resolve_default_sources_path,
 )
+from rom_newsletter.topic import load_topic_for_run
 
 
 def _parse_date(s: str | None) -> date:
@@ -56,7 +53,6 @@ def _log_phase_timings(
     arxiv_ms: float,
     rss_ms: float,
     newsroom_ms: float,
-    tavily_ms: float,
     compose_ms: float | None = None,
 ) -> None:
     """Wall-clock ms per pipeline phase (stderr; discovery order matches run)."""
@@ -64,7 +60,6 @@ def _log_phase_timings(
         f"arXiv={arxiv_ms:.0f}ms",
         f"RSS={rss_ms:.0f}ms",
         f"newsroom={newsroom_ms:.0f}ms",
-        f"Tavily={tavily_ms:.0f}ms",
     ]
     if compose_ms is not None:
         parts.append(f"compose={compose_ms:.0f}ms")
@@ -101,6 +96,12 @@ def main(argv: list[str] | None = None) -> None:
         help="Path to sources.json (default: <repo>/sources.json)",
     )
     p.add_argument(
+        "--topic",
+        type=Path,
+        default=None,
+        help="Topic profile JSON (default: env ROM_NEWSLETTER_TOPIC or <repo>/topic.json; else built-in ROM defaults)",
+    )
+    p.add_argument(
         "--output-dir",
         type=Path,
         default=None,
@@ -119,12 +120,6 @@ def main(argv: list[str] | None = None) -> None:
         help="Chat model id (default: env ROM_NEWSLETTER_MODEL or grok-4-fast)",
     )
     p.add_argument(
-        "--max-results",
-        type=int,
-        default=6,
-        help="Tavily max_results per keyword (1–20)",
-    )
-    p.add_argument(
         "--arxiv-max",
         type=int,
         default=25,
@@ -136,48 +131,6 @@ def main(argv: list[str] | None = None) -> None:
         help="Run discovery only; print summary and write *-search.json; skip LLM",
     )
     p.add_argument(
-        "--tavily-sources-only",
-        action="store_true",
-        help="Restrict Tavily hits to hosts in sources.json (default: search the open web)",
-    )
-    p.add_argument(
-        "--allow-off-source",
-        action="store_true",
-        help=argparse.SUPPRESS,
-    )
-    p.add_argument(
-        "--no-filter-tavily-by-page-date",
-        action="store_true",
-        help="Disable Tavily page-date filtering (default: enabled; fetches each result URL)",
-    )
-    p.add_argument(
-        "--filter-tavily-by-page-date",
-        action="store_true",
-        help="Deprecated: page-date filtering is on by default; kept for script compatibility",
-    )
-    p.add_argument(
-        "--keep-tavily-undated",
-        action="store_true",
-        help="When filtering Tavily by page date, keep hits with no parseable publish date (default: drop them)",
-    )
-    p.add_argument(
-        "--tavily-drop-undated",
-        action="store_true",
-        help="Deprecated: undated hits are dropped by default; this flag is a no-op",
-    )
-    p.add_argument(
-        "--tavily-date-workers",
-        type=int,
-        default=6,
-        help="Parallel fetches for Tavily page-date filtering (default: 6)",
-    )
-    p.add_argument(
-        "--tavily-date-timeout",
-        type=float,
-        default=15.0,
-        help="HTTP timeout per Tavily result page when filtering by date (seconds)",
-    )
-    p.add_argument(
         "--no-arxiv",
         action="store_true",
         help="Skip arXiv API (submittedDate) fetch",
@@ -186,11 +139,6 @@ def main(argv: list[str] | None = None) -> None:
         "--no-rss",
         action="store_true",
         help="Skip RSS/Atom feeds (per-source rss in sources.json + defaults)",
-    )
-    p.add_argument(
-        "--no-tavily",
-        action="store_true",
-        help="Skip AI Builders Tavily search (vendor web discovery)",
     )
     p.add_argument(
         "--no-newsroom",
@@ -245,20 +193,17 @@ def main(argv: list[str] | None = None) -> None:
     )
 
     args = p.parse_args(argv)
-    if args.allow_off_source:
-        print(
-            "rom-newsletter: --allow-off-source is obsolete (Tavily uses the open web by default). "
-            "Use --tavily-sources-only to restrict hits to sources.json hosts.",
-            file=sys.stderr,
-        )
-    max_results = max(1, min(20, args.max_results))
-    if max_results != args.max_results:
-        print(f"Clamped --max-results to {max_results} (valid range 1–20).", file=sys.stderr)
     arxiv_max = max(1, min(2000, args.arxiv_max))
     if arxiv_max != args.arxiv_max:
         print(f"Clamped --arxiv-max to {arxiv_max}.", file=sys.stderr)
 
     root = project_root()
+    try:
+        topic = load_topic_for_run(root, args.topic)
+    except FileNotFoundError as e:
+        print(e, file=sys.stderr)
+        sys.exit(1)
+
     sources_path = args.sources or resolve_default_sources_path(root)
     if not sources_path.is_file():
         print(f"Missing sources file: {sources_path}", file=sys.stderr)
@@ -296,14 +241,17 @@ def main(argv: list[str] | None = None) -> None:
     history_path = args.history_file or (root / ".rom-newsletter" / "seen_urls.json")
     seen: set[str] = set() if args.no_skip_seen else load_seen_urls(history_path)
 
-    arxiv_ms = rss_ms = newsroom_ms = tavily_ms = 0.0
+    arxiv_ms = rss_ms = newsroom_ms = 0.0
 
     arxiv_meta: dict | None = None
     arxiv_hits: list = []
-    if not args.no_arxiv and _has_arxiv(sources):
+    if not args.no_arxiv and _has_arxiv(sources) and topic.arxiv_search_query is not None:
         t_arxiv = time.perf_counter()
         arxiv_hits, arxiv_meta = fetch_arxiv_hits(
-            start_utc, end_utc, max_results=arxiv_max
+            start_utc,
+            end_utc,
+            max_results=arxiv_max,
+            topic_query=topic.arxiv_search_query,
         )
         arxiv_ms = _elapsed_ms(t_arxiv)
         arxiv_meta = {**(arxiv_meta or {}), "hit_count": len(arxiv_hits)}
@@ -330,41 +278,6 @@ def main(argv: list[str] | None = None) -> None:
             ],
         }
 
-    tavily_hits: list = []
-    search_json: dict = {}
-    tavily_errors: list = []
-    tavily_date_filter_stats: dict | None = None
-    tavily_hits_after_normalize = 0
-    keywords = build_tavily_keywords(sources, include_arxiv_web=False)
-    if not args.no_tavily and keywords:
-        t_tavily = time.perf_counter()
-        token = get_token()
-        search_json = run_search(token, keywords, max_results=max_results)
-        filter_tavily_page_date = not args.no_filter_tavily_by_page_date
-        tavily_hits, tavily_errors = normalize_hits(
-            search_json,
-            allow,
-            allow_off_source=not args.tavily_sources_only,
-            sources=sources,
-            date_window=(start_utc, end_utc) if filter_tavily_page_date else None,
-        )
-        tavily_hits_after_normalize = len(tavily_hits)
-        if filter_tavily_page_date and tavily_hits:
-            tw = max(1, min(32, args.tavily_date_workers))
-            if tw != args.tavily_date_workers:
-                print(f"Clamped --tavily-date-workers to {tw}.", file=sys.stderr)
-            tavily_hits, tavily_date_filter_stats = filter_tavily_hits_by_page_date(
-                tavily_hits,
-                start_utc,
-                end_utc,
-                max_workers=tw,
-                timeout=args.tavily_date_timeout,
-                drop_undated=not args.keep_tavily_undated,
-            )
-        tavily_ms = _elapsed_ms(t_tavily)
-    elif not args.no_tavily and not keywords:
-        print("No Tavily keywords (empty sources?); skipping web search.", file=sys.stderr)
-
     newsroom_hits: list = []
     newsroom_meta: dict | None = None
     if not args.no_newsroom:
@@ -373,61 +286,33 @@ def main(argv: list[str] | None = None) -> None:
             sources,
             start_utc,
             end_utc,
-            timeout=max(5.0, args.tavily_date_timeout),
-            max_workers=max(2, min(32, args.tavily_date_workers)),
+            timeout=15.0,
+            max_workers=6,
         )
         newsroom_ms = _elapsed_ms(t_newsroom)
 
-    merged = merge_hits_ordered(arxiv_hits, rss_hits, newsroom_hits, tavily_hits)
+    merged = merge_hits_ordered(arxiv_hits, rss_hits, newsroom_hits)
     merged, skipped_seen = filter_unseen(merged, seen)
 
-    theme_min = max(0, args.theme_min_score)
+    if topic.theme_disabled and args.theme_min_score > 0:
+        print(
+            "rom-newsletter: topic.theme.disabled is true; effective --theme-min-score is 0.",
+            file=sys.stderr,
+        )
+    theme_min = 0 if topic.theme_disabled else max(0, args.theme_min_score)
     merged, theme_stats = apply_theme_filter(
         merged,
         min_score=theme_min,
         max_non_arxiv=max(1, args.max_non_arxiv_hits),
         floor_non_arxiv=max(0, args.theme_floor_non_arxiv),
         backfill_min_score=max(0, args.theme_backfill_min_score),
+        weighted_patterns=topic.theme_patterns,
     )
-
-    tavily_block = None
-    if not args.no_tavily:
-        tavily_block = {
-            "keyword_count": len(keywords),
-            "keywords": keywords,
-            "tavily_sources_only": bool(args.tavily_sources_only),
-            "hits_after_normalize": tavily_hits_after_normalize,
-            "hit_count": len(tavily_hits),
-            "errors": tavily_errors,
-            "combined_answer": search_json.get("combined_answer"),
-        }
-        if tavily_date_filter_stats is not None:
-            tavily_block["page_date_filter"] = tavily_date_filter_stats
-
-    if (
-        not args.no_tavily
-        and keywords
-        and tavily_hits_after_normalize > 0
-        and len(tavily_hits) == 0
-        and tavily_date_filter_stats is not None
-        and tavily_date_filter_stats.get("input_count", 0) > 0
-        and tavily_date_filter_stats.get("output_count", 0) == 0
-    ):
-        st = tavily_date_filter_stats
-        print(
-            "Tavily: page-date filter removed every normalized hit "
-            f"(outside_window={st.get('dropped_outside_window', 0)}, "
-            f"undated_dropped={st.get('dropped_undated', 0)}). "
-            "Use --keep-tavily-undated to keep pages with no parseable date, "
-            "or --no-filter-tavily-by-page-date to skip HTML fetch.",
-            file=sys.stderr,
-        )
 
     phase_timings_ms = {
         "arxiv": round(arxiv_ms, 1),
         "rss": round(rss_ms, 1),
         "newsroom": round(newsroom_ms, 1),
-        "tavily": round(tavily_ms, 1),
     }
 
     report = pipeline_report_json(
@@ -435,7 +320,6 @@ def main(argv: list[str] | None = None) -> None:
         arxiv=arxiv_meta,
         rss=rss_meta,
         newsroom=newsroom_meta,
-        tavily=tavily_block,
         merged_hits=merged,
         skipped_seen=skipped_seen,
         theme_filter=theme_stats,
@@ -446,26 +330,18 @@ def main(argv: list[str] | None = None) -> None:
     search_path = out_dir / f"{base}-search.json"
     search_path.write_text(report, encoding="utf-8")
 
-    if tavily_errors:
-        print("Tavily search warnings:", file=sys.stderr)
-        for e in tavily_errors:
-            print(f"  {e}", file=sys.stderr)
-
     if args.dry_run_search:
         _log_phase_timings(
             arxiv_ms=arxiv_ms,
             rss_ms=rss_ms,
             newsroom_ms=newsroom_ms,
-            tavily_ms=tavily_ms,
             compose_ms=None,
         )
         print(f"Window (UTC): {window_meta['start']} .. {window_meta['end']}")
         print(
             f"arXiv hits: {len(arxiv_hits)}  RSS hits: {len(rss_hits)}  "
-            f"Newsroom hits: {len(newsroom_hits)}  Tavily hits: {len(tavily_hits)}"
+            f"Newsroom hits: {len(newsroom_hits)}"
         )
-        if tavily_date_filter_stats:
-            print(f"Tavily page-date filter: {tavily_date_filter_stats}")
         print(f"Merged (after skip-seen + theme filter): {len(merged)}  skipped_seen: {skipped_seen}")
         if theme_stats:
             print(f"Theme filter: {theme_stats}")
@@ -482,13 +358,13 @@ def main(argv: list[str] | None = None) -> None:
         industry_bundle=industry_bundle,
         week_hint=week_label,
         refine=args.refine,
+        topic=topic,
     )
     compose_ms = _elapsed_ms(t_compose)
     _log_phase_timings(
         arxiv_ms=arxiv_ms,
         rss_ms=rss_ms,
         newsroom_ms=newsroom_ms,
-        tavily_ms=tavily_ms,
         compose_ms=compose_ms,
     )
 
@@ -501,6 +377,8 @@ def main(argv: list[str] | None = None) -> None:
     html_str = render_html(
         draft,
         template_dir=args.template_dir,
+        industry_heading=topic.sections.industry_heading,
+        research_heading=topic.sections.research_heading,
     )
     html_path = out_dir / f"{base}.html"
     html_path.write_text(html_str, encoding="utf-8")

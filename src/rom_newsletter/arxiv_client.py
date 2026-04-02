@@ -105,8 +105,15 @@ def _submitted_date_clause(start: datetime, end: datetime) -> str:
     return f"submittedDate:[{su} TO {eu}]"
 
 
-def build_arxiv_search_query(start: datetime, end: datetime) -> str:
-    return f"{_arxiv_topic_query()} AND {_submitted_date_clause(start, end)}"
+def build_arxiv_search_query(
+    start: datetime,
+    end: datetime,
+    *,
+    topic_query: str | None = None,
+) -> str:
+    """Lucene body + ``submittedDate`` window. *topic_query* overrides the default ROM/SciML query."""
+    body = _arxiv_topic_query() if topic_query is None else topic_query
+    return f"{body} AND {_submitted_date_clause(start, end)}"
 
 
 def _text(el: ET.Element | None) -> str:
@@ -151,6 +158,7 @@ def fetch_arxiv_hits(
     *,
     max_results: int = 25,
     timeout: float = 180.0,
+    topic_query: str | None = None,
 ) -> tuple[list[SearchHit], dict[str, Any]]:
     """Query arXiv API with submittedDate filter; returns hits + raw metadata.
 
@@ -161,7 +169,7 @@ def fetch_arxiv_hits(
     read_sec = timeout
     if (raw := os.environ.get("ROM_NEWSLETTER_ARXIV_READ_TIMEOUT", "").strip()):
         read_sec = float(raw)
-    q = build_arxiv_search_query(start, end)
+    q = build_arxiv_search_query(start, end, topic_query=topic_query)
     params = {
         "search_query": q,
         "start": 0,

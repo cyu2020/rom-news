@@ -1,0 +1,86 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://rom-newsletter.local/topic.schema.json",
+  "title": "ROM newsletter topic profile",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "version",
+    "name",
+    "arxiv",
+    "theme",
+    "compose",
+    "sections",
+    "buttondown"
+  ],
+  "properties": {
+    "$schema": { "type": "string" },
+    "version": { "type": "integer", "const": 1 },
+    "name": { "type": "string", "minLength": 1 },
+    "arxiv": {
+      "oneOf": [
+        { "type": "null" },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "search_query": { "type": ["string", "null"] }
+          }
+        }
+      ]
+    },
+    "theme": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["disabled"],
+      "properties": {
+        "disabled": { "type": "boolean" },
+        "patterns": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["pattern", "weight"],
+            "properties": {
+              "pattern": { "type": "string", "minLength": 1 },
+              "weight": { "type": "integer" }
+            }
+          }
+        }
+      }
+    },
+    "compose": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "editor_intro",
+        "subject_rules",
+        "classification_block",
+        "refine_system_extra"
+      ],
+      "properties": {
+        "editor_intro": { "type": "string", "minLength": 1 },
+        "subject_rules": { "type": "string", "minLength": 1 },
+        "classification_block": { "type": "string", "minLength": 1 },
+        "refine_system_extra": { "type": "string", "minLength": 1 }
+      }
+    },
+    "sections": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["industry_heading", "research_heading"],
+      "properties": {
+        "industry_heading": { "type": "string", "minLength": 1 },
+        "research_heading": { "type": "string", "minLength": 1 }
+      }
+    },
+    "buttondown": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["fallback_subject"],
+      "properties": {
+        "fallback_subject": { "type": "string", "minLength": 1 }
+      }
+    }
+  }
+}

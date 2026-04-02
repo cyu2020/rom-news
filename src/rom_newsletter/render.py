@@ -39,6 +39,8 @@ def render_html(
     draft: NewsletterDraft,
     *,
     template_dir: Path | None = None,
+    industry_heading: str = "Industry News",
+    research_heading: str = "Research Papers",
 ) -> str:
     base = template_dir or (Path(__file__).resolve().parent.parent.parent / "templates")
     env = Environment(
@@ -50,4 +52,6 @@ def render_html(
         subject=draft.subject,
         research=_major_view(draft.research_papers),
         industry=_major_view(draft.industry_news),
+        industry_heading=industry_heading,
+        research_heading=research_heading,
     )

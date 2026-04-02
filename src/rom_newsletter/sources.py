@@ -6,7 +6,7 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
 
-# Tavily / discovery behavior
+# Discovery behavior
 KIND_ARXIV = "arxiv"
 KIND_NVIDIA = "nvidia"
 KIND_SIEMENS = "siemens"
@@ -29,7 +29,7 @@ class Source:
     id: str | None = None
     rss: str | None = None
     rss_feed_hosts: frozenset[str] = frozenset()
-    #: When True, fetch listing HTML at ``url`` (see ``newsroom_listings``) instead of relying on that domain from Tavily alone.
+    #: When True, fetch listing HTML at ``url`` (see ``newsroom_listings``) for direct article discovery.
     newsroom_listing: bool = False
 
 

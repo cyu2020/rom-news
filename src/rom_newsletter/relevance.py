@@ -41,10 +41,17 @@ def is_arxiv_hit(hit: SearchHit) -> bool:
     return "arxiv.org" in hit.url.lower()
 
 
-def theme_score(hit: SearchHit) -> int:
+def theme_score(
+    hit: SearchHit,
+    weighted: list[tuple[re.Pattern[str], int]] | None = None,
+) -> int:
+    """Sum of weights for regex matches. *weighted* defaults to built-in ROM/SciML patterns."""
+    patterns = weighted if weighted is not None else _WEIGHTED
+    if not patterns:
+        return 0
     blob = f"{hit.title}\n{hit.content}\n{hit.url}\n{hit.keyword}"
     total = 0
-    for pat, w in _WEIGHTED:
+    for pat, w in patterns:
         if pat.search(blob):
             total += w
     return total
@@ -57,6 +64,7 @@ def apply_theme_filter(
     max_non_arxiv: int | None = 48,
     floor_non_arxiv: int = 5,
     backfill_min_score: int = 1,
+    weighted_patterns: list[tuple[re.Pattern[str], int]] | None = None,
 ) -> tuple[list[SearchHit], dict[str, Any]]:
     """Keep all arXiv hits; rank other hits by theme score, keep those >= min_score.
 
@@ -69,7 +77,7 @@ def apply_theme_filter(
     """
     arxiv = [h for h in hits if is_arxiv_hit(h)]
     other = [h for h in hits if not is_arxiv_hit(h)]
-    scored = [(theme_score(h), h) for h in other]
+    scored = [(theme_score(h, weighted_patterns), h) for h in other]
     scored.sort(key=lambda x: (-x[0], x[1].url))
 
     stats: dict[str, Any] = {
@@ -92,7 +100,8 @@ def apply_theme_filter(
         out = merge_hits_ordered(arxiv, kept)
         non_arx_out = [h for h in out if not is_arxiv_hit(h)]
         stats["non_arxiv_sample"] = [
-            {"url": h.url, "theme_score": theme_score(h)} for h in non_arx_out[:20]
+            {"url": h.url, "theme_score": theme_score(h, weighted_patterns)}
+            for h in non_arx_out[:20]
         ]
         return out, stats
 
@@ -119,7 +128,7 @@ def apply_theme_filter(
                 backfill += 1
 
     if max_non_arxiv is not None and len(kept) > max_non_arxiv:
-        kept_scored = [(theme_score(h), h) for h in kept]
+        kept_scored = [(theme_score(h, weighted_patterns), h) for h in kept]
         kept_scored.sort(key=lambda x: (-x[0], x[1].url))
         kept = [h for _, h in kept_scored[:max_non_arxiv]]
 
@@ -131,6 +140,7 @@ def apply_theme_filter(
     out = merge_hits_ordered(arxiv, kept)
     non_arx_out = [h for h in out if not is_arxiv_hit(h)]
     stats["non_arxiv_sample"] = [
-        {"url": h.url, "theme_score": theme_score(h)} for h in non_arx_out[:20]
+        {"url": h.url, "theme_score": theme_score(h, weighted_patterns)}
+        for h in non_arx_out[:20]
     ]
     return out, stats

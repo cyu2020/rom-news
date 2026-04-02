@@ -1,15 +1,14 @@
 # ROM newsletter agent
 
-Generates a weekly-style briefing on **reduced-order modeling**, **scientific machine learning**, and **digital twins** using the [AI Builders Space API](https://space.ai-builders.com/backend) plus **arXiv** and optional **RSS**:
+Generates a weekly-style briefing on **reduced-order modeling**, **scientific machine learning**, and **digital twins** from sources such as **arXiv**, selected **RSS**, and selected **newsroom** listing:
 
 1. **arXiv** — Official Atom API with **`submittedDate:[start TO end]`** in UTC (no duplicate web-scrape of arXiv).
 2. **RSS** — Feeds come from optional **`rss`** (and **`feed_hosts`**) on entries in [`sources.json`](sources.json), then small built-in defaults in code (deduped by URL). **Per-source `rss` wins** if the same feed URL appears twice. The feed URL’s hostname must match a domain from your sources list, **or** set **`feed_hosts`** (e.g. `news.synopsys.com` for [Synopsys Simulation & Analysis RSS](https://news.synopsys.com/home?pagetemplate=rss&category=778)). Items are filtered by **published date** inside the window; article links may be off-domain.
 3. **Newsroom listings** (optional) — Sources with **`newsroom_listing: true`** use built-in discovery: HTML listing parsers for **`id`** `physicsx`, `neural-concept`, `emmi-ai`, **`luminary`** (Press cards on **`luminary.ai/resources`**), **`vinci4d`** (**`getvinci.ai/news`**), **`akselos`** (News-filter resource hub); **`id`** **`siemens`** uses **`news.siemens.com/en-us/sitemap-en-us.xml`**; **`id`** **`p1-ai`** pulls curated **press** links from the **`p-1.ai`** homepage. Dates come from the listing (PhysicsX, Luminary Press cards), article pages (Neural Concept, Emmi, P-1, Vinci, Akselos when missing on the index), or **sitemap `<lastmod>`** (Siemens). Use **`--no-newsroom`** to skip.
-4. **Tavily** — `POST /v1/search/` with a few **broad** topic keywords (ROM / SciML / twins / operators, etc.). **By default** results may come from **any domain** (open web). Use **`--tavily-sources-only`** to restrict hits to hosts listed in [`sources.json`](sources.json). Each hit is tagged **`papers`** vs **`industry`** when the URL matches a source host; otherwise it is treated as **industry** for the LLM split. No server-side time range in the API. **By default**, each Tavily result URL is fetched and hits are **dropped** if the parsed HTML publish date is outside the UTC window (`article:published_time` / JSON-LD / `<time>`), or if **no** publish date can be parsed. If the search API returns a date on a result object, that is used as a cheap pre-filter first. Use **`--keep-tavily-undated`** to keep pages where the date could not be parsed (noisier). Use **`--no-filter-tavily-by-page-date`** to skip these fetches (faster; more stale URLs possible). **`*-search.json`** reports **`hits_after_normalize`** (after normalize, including optional host filter when `--tavily-sources-only`) vs **`hit_count`** (after page-date filter); if you only run Tavily (`--no-arxiv` / `--no-rss` / …) and see **`hits_after_normalize` > 0** but **`hit_count` 0**, the HTML date step removed everything—try **`--keep-tavily-undated`**.
-5. **Dedupe** — Merged list excludes URLs already recorded in [`.rom-newsletter/seen_urls.json`](.rom-newsletter/seen_urls.json) (disable with `--no-skip-seen`).
-6. **Theme filter** — Non–arXiv hits get a **theme score** (keywords for digital/virtual twins, ROM, SciML, PINNs, operators, CAE, simulation platforms, etc.). Hits below `--theme-min-score` are dropped; optional **backfill** only from scores ≥ `--theme-backfill-min-score`. arXiv hits are never scored out.
-7. **Compose** — `POST /v1/chat/completions` → structured JSON: **Research Papers** and **Industry News**, each with an intro and up to five subsections (title, body, links); subject line only (no global intro/takeaway; citations live under each subsection). Discovery tags each hit with **`sources.json` `category`** (`papers` vs `industry`); the LLM receives **two excerpt blocks** (research vs industry) so sections stay aligned with configured sources. The model is instructed to **skip** off-topic industry stories.
-8. **Render** — Jinja2 → single HTML file (**Industry News** block first, then **Research Papers**).
+4. **Dedupe** — Merged list excludes URLs already recorded in [`.rom-newsletter/seen_urls.json`](.rom-newsletter/seen_urls.json) (disable with `--no-skip-seen`).
+5. **Theme filter** — Non–arXiv hits get a **theme score** (keywords for digital/virtual twins, ROM, SciML, PINNs, operators, CAE, simulation platforms, etc.). Hits below `--theme-min-score` are dropped; optional **backfill** only from scores ≥ `--theme-backfill-min-score`. arXiv hits are never scored out.
+6. **Compose** — `POST /v1/chat/completions` → structured JSON: **Research Papers** and **Industry News**, each with an intro and up to five subsections (title, body, links); subject line only (no global intro/takeaway; citations live under each subsection). Discovery tags each hit with **`sources.json` `category`** (`papers` vs `industry`); the LLM receives **two excerpt blocks** (research vs industry) so sections stay aligned with configured sources. The model is instructed to **skip** off-topic industry stories.
+7. **Render** — Jinja2 → single HTML file (**Industry News** block first, then **Research Papers**).
 
 ## Setup
 
@@ -18,8 +17,8 @@ Generates a weekly-style briefing on **reduced-order modeling**, **scientific ma
 
 ```bash
 cd /path/to/rom-news
-/home/cheng-yu/.local/bin/uv venv -p 3.13 .venv
-/home/cheng-yu/.local/bin/uv pip install --python .venv/bin/python -e .
+uv venv -p 3.13 .venv
+uv pip install --python .venv/bin/python -e .
 source .venv/bin/activate   # optional; or invoke .venv/bin/python -m rom_newsletter
 ```
 
@@ -33,6 +32,11 @@ Optional environment variables:
 | `BUTTONDOWN_API_VERSION` | Optional `X-API-Version` for Buttondown (e.g. `2026-04-01`) |
 | `ROM_NEWSLETTER_ARXIV_READ_TIMEOUT` | Override arXiv HTTP **read** timeout in seconds (default **180**; raise in CI if `export.arxiv.org` is slow) |
 | `ROM_NEWSLETTER_ARXIV_USER_AGENT` | Custom `User-Agent` for arXiv API calls ([API manual](https://arxiv.org/help/api/user-manual)); helps avoid **429** rate limits from shared IPs (e.g. GitHub Actions) |
+| `ROM_NEWSLETTER_TOPIC` | Path to a `topic.json` profile (arXiv query, theme patterns, compose copy, section titles, Buttondown fallback subject). Overrides the default `<repo>/topic.json` when set. |
+
+## Custom topics (`topic.json`)
+
+Discovery strings, arXiv Lucene body, theme regexes, composer instructions, HTML section headings, and the Buttondown subject fallback can live in **[`topic.json`](topic.json)** (or another file via **`--topic`** / **`ROM_NEWSLETTER_TOPIC`**). **[`sources.json`](sources.json)** stays the place for feeds and URL allowlists. See **[`docs/custom-topic.md`](docs/custom-topic.md)** for a checklist, loading rules, and a stub profile. Newsroom parsers are documented separately in **[`docs/newsroom_listings.md`](docs/newsroom_listings.md)** (vendor-specific code, not driven by `topic.json`).
 
 ## Usage
 
@@ -46,7 +50,7 @@ rom-newsletter --date 2025-03-20
 
 - `--window-days 7` (default): last 7 days through `--date`.
 
-**Search-only** (writes `*-search.json` with arXiv + RSS + newsroom + Tavily breakdown; no LLM):
+**Search-only** (writes `*-search.json` with arXiv + RSS + newsroom breakdown; no LLM):
 
 ```bash
 rom-newsletter --dry-run-search
@@ -63,21 +67,14 @@ rom-newsletter --arxiv-max 100
 | Flag | Purpose |
 |------|---------|
 | `--model gemini-2.5-pro` | Override chat model |
-| `--max-results 8` | Tavily `max_results` per keyword (1–20) |
 | `--arxiv-max N` | Max results from the arXiv API (1–2000; default `25`) |
 | `--no-arxiv` | Skip arXiv API |
 | `--no-rss` | Skip RSS feeds |
-| `--no-tavily` | Skip AI Builders web search |
 | `--no-newsroom` | Skip newsroom listing scrapes (`newsroom_listing` in sources) |
 | `--no-skip-seen` | Ignore `.rom-newsletter/seen_urls.json` |
 | `--history-file PATH` | Custom seen-URL ledger |
 | `--sources PATH` | `sources.json` (default: `<repo>/sources.json`) |
-| `--tavily-sources-only` | Restrict Tavily hits to hosts in `sources.json` (default: open web) |
-| `--no-filter-tavily-by-page-date` | Disable Tavily page fetch + date filter (default is **on**) |
-| `--filter-tavily-by-page-date` | Deprecated no-op (filtering is default) |
-| `--keep-tavily-undated` | With page-date filter, keep hits with no parseable date (default: drop undated) |
-| `--tavily-date-workers` | Parallelism for Tavily page-date fetches (default 6) |
-| `--tavily-date-timeout` | Per-URL HTTP timeout in seconds (default 15) |
+| `--topic PATH` | Topic profile JSON (default: env `ROM_NEWSLETTER_TOPIC` or `<repo>/topic.json`; if missing, built-in ROM defaults) |
 | `--theme-min-score N` | Non-arXiv hits need theme score ≥ N to keep (default `2`; `0` = rank/cap only) |
 | `--theme-floor-non-arxiv` | Soft floor for non-arXiv count after filtering (default 5); backfill uses `--theme-backfill-min-score` |
 | `--theme-backfill-min-score` | Minimum theme score for backfill rows (default 1; avoids score-0 filler) |
@@ -94,13 +91,13 @@ Outputs (for `--date 2025-03-20`):
 
 ## Performance
 
-Runs can take **many minutes** when discovery is heavy (arXiv retries, many RSS feeds, newsroom article fetches) or when the **compose** step receives a **large excerpt bundle** (especially with `--no-skip-seen`, high `--arxiv-max`, or many Tavily hits).
+Runs can take **many minutes** when discovery is heavy (arXiv retries, many RSS feeds, newsroom article fetches) or when the **compose** step receives a **large excerpt bundle** (especially with `--no-skip-seen` or high `--arxiv-max`).
 
 ### Tips with today’s CLI
 
-- **`--dry-run-search`** — Stops after writing `*-search.json` (no LLM). If this is already slow, time is going to **arXiv / RSS / newsroom / Tavily**; if it is fast but the full run is not, the bottleneck is mostly **compose** (and occasionally JSON repair).
+- **`--dry-run-search`** — Stops after writing `*-search.json` (no LLM). If this is already slow, time is going to **arXiv / RSS / newsroom**; if it is fast but the full run is not, the bottleneck is mostly **compose** (and occasionally JSON repair).
 - **Seen-URL ledger** — Avoid **`--no-skip-seen`** for routine runs so fewer URLs reach the theme filter and the model (smaller prompts, faster generation).
-- **Discovery scope** — Use **`--no-tavily`**, **`--no-arxiv`**, **`--no-rss`**, or **`--no-newsroom`** when you only need part of the pipeline.
+- **Discovery scope** — Use **`--no-arxiv`**, **`--no-rss`**, or **`--no-newsroom`** when you only need part of the pipeline.
 - **Caps** — Lower **`--arxiv-max`** and **`--max-non-arxiv-hits`** to shrink the prompt; raise them only when you need depth.
 - **arXiv** — Tuning **`ROM_NEWSLETTER_ARXIV_READ_TIMEOUT`** and **`ROM_NEWSLETTER_ARXIV_USER_AGENT`** (see table above) can reduce wall time when the API is slow or returning **429**.
 
@@ -108,9 +105,9 @@ Runs can take **many minutes** when discovery is heavy (arXiv retries, many RSS 
 
 Each run logs wall-clock **milliseconds per phase** to **stderr**, for example:
 
-`rom-newsletter phase timings: arXiv=1200ms RSS=3400ms newsroom=8000ms Tavily=0ms compose=45000ms`
+`rom-newsletter phase timings: arXiv=1200ms RSS=3400ms newsroom=8000ms compose=45000ms`
 
-Skipped phases show **0ms** (e.g. **`--no-tavily`**). **`compose`** is included only on **full** runs (after the LLM); **`--dry-run-search`** omits it. The written **`*-search.json`** includes a **`phase_timings_ms`** object for **discovery** only (arXiv, RSS, newsroom, Tavily), since that file is produced before compose.
+Skipped phases show **0ms** (e.g. **`--no-rss`**). **`compose`** is included only on **full** runs (after the LLM); **`--dry-run-search`** omits it. The written **`*-search.json`** includes a **`phase_timings_ms`** object for **discovery** only (arXiv, RSS, newsroom), since that file is produced before compose.
 
 ### Future improvements (not implemented yet)
 
@@ -130,7 +127,7 @@ Ideas that would speed up or stabilize runs without changing the overall product
 The workflow [`.github/workflows/weekly-newsletter.yml`](.github/workflows/weekly-newsletter.yml) runs **every Monday 14:00 UTC** (adjust the `cron` expression if you want a different time or timezone). It:
 
 1. Sets **`WEEK_END`** to the **previous Sunday** in UTC (`date -u -d 'last Sunday'`), matching `rom-newsletter --date` as the **end** of the inclusive UTC window ([`dates.py`](src/rom_newsletter/dates.py) behavior).
-2. Runs `rom-newsletter --date "$WEEK_END" --no-skip-seen --output-dir dist --no-tavily`.
+2. Runs `rom-newsletter --date "$WEEK_END" --no-skip-seen --output-dir dist`.
 3. Publishes `dist/newsletter-<WEEK_END>.html` to [Buttondown](https://buttondown.com/) via `rom-newsletter-buttondown`, using the **`subject`** from `dist/newsletter-<WEEK_END>.json`.
 
 ### GitHub Actions setup
@@ -182,7 +179,7 @@ When the run succeeds, **`dist/`** is uploaded as a workflow artifact. If **Gene
 The config file is **[`sources.json`](sources.json)** at the repo root unless you pass **`--sources`**.
 
 - **`version`**: must be `1`.
-- **`sources`**: array of entries with **`label`** and **`url`** (HTTP(S)); optional **`id`**, **`category`** (e.g. `papers` / `industry`), **`kind`** (`arxiv` \| `nvidia` \| `siemens` \| `ansys` \| `generic` or omitted to infer from the URL host), **`rss`**, **`feed_hosts`** (extra hostnames allowed for RSS item links when they differ from the feed host), and **`newsroom_listing`** (boolean: built-in newsroom discovery instead of Tavily; requires a supported **`id`** — see [`newsroom_listings.py`](src/rom_newsletter/newsroom_listings.py) and bullet 3 above).
+- **`sources`**: array of entries with **`label`** and **`url`** (HTTP(S)); optional **`id`**, **`category`** (e.g. `papers` / `industry`), **`kind`** (`arxiv` \| `nvidia` \| `siemens` \| `ansys` \| `generic` or omitted to infer from the URL host), **`rss`**, **`feed_hosts`** (extra hostnames allowed for RSS item links when they differ from the feed host), and **`newsroom_listing`** (boolean: built-in newsroom discovery; requires a supported **`id`** — see [`newsroom_listings.py`](src/rom_newsletter/newsroom_listings.py) and bullet 3 above).
 
 Optional **[`sources.schema.json`](sources.schema.json)** documents the shape for editors that support JSON Schema.
 
@@ -206,18 +203,13 @@ Example (Synopsys feed with off-domain item links — same pattern as the **`syn
 }
 ```
 
-### Siemens & Altair
-
-**Siemens** is covered by **`newsroom_listing`** in [`sources.json`](sources.json) (en-us sitemap), not RSS. **Altair** has no feed in this repo; Tavily can still surface **`altair.com`** on the open web, or add a **generic** source entry if you want that host tagged from config—optionally add **`rss`** once you have a stable feed URL.
-
 ## Limitations
 
-- **Tavily** has no documented date-range parameter; **page-date filtering is on by default** (HTML fetch + parse: meta tags, **`og:published_time`**, JSON-LD `datePublished`, and visible English dates like `March 17, 2026`). Use **`--no-filter-tavily-by-page-date`** to disable. Undated pages are **dropped** by default; use **`--keep-tavily-undated`** if you need JS-rendered or paywalled pages that still have no parseable date in the raw HTML.
 - Treat generated text as a **draft**; verify claims from primary sources.
 
 ## Project layout
 
-- `src/rom_newsletter/` — CLI, arXiv, RSS, optional newsroom listings, Tavily merge, compose, render, [`buttondown_publish`](src/rom_newsletter/buttondown_publish.py)
+- `src/rom_newsletter/` — CLI, arXiv, RSS, optional newsroom listings, compose, render, [`buttondown_publish`](src/rom_newsletter/buttondown_publish.py)
 - `.github/workflows/weekly-newsletter.yml` — Monday cron + Buttondown publish
 - `templates/newsletter.html.j2` — HTML layout
 - `sources.json` — categorized sources and RSS feeds (required unless `--sources` points elsewhere)

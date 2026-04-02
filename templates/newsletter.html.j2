@@ -20,7 +20,7 @@
 <body>
   <!-- Subject and issue date come from the newsletter platform; body starts at section headings. -->
   <div class="wrap">
-    <h2 class="major">Industry News</h2>
+    <h2 class="major">{{ industry_heading }}</h2>
     <div class="major-intro">
 {% for p in industry.intro_paras %}
       <p>{{ p | safe }}</p>
@@ -40,7 +40,7 @@
 {% endif %}
 {% endfor %}
 
-    <h2 class="major">Research Papers</h2>
+    <h2 class="major">{{ research_heading }}</h2>
     <div class="major-intro">
 {% for p in research.intro_paras %}
       <p>{{ p | safe }}</p>

@@ -13,7 +13,7 @@ from typing import Any
 
 import httpx
 
-from rom_newsletter.config import get_buttondown_api_key, load_env
+from rom_newsletter.config import get_buttondown_api_key, load_env, project_root
 
 BUTTONDOWN_EMAILS_URL = "https://api.buttondown.com/v1/emails"
 FANCY_PREFIX = "<!-- buttondown-editor-mode: fancy -->\n"
@@ -65,7 +65,12 @@ def newsletter_paths(output_dir: Path, stamp: str) -> tuple[Path, Path]:
     return base.with_suffix(".html"), base.with_suffix(".json")
 
 
-def load_html_and_subject(html_path: Path, json_path: Path) -> tuple[str, str]:
+def load_html_and_subject(
+    html_path: Path,
+    json_path: Path,
+    *,
+    topic_path: Path | None = None,
+) -> tuple[str, str]:
     if not html_path.is_file():
         raise FileNotFoundError(f"Missing HTML: {html_path}")
     html = html_path.read_text(encoding="utf-8")
@@ -77,7 +82,12 @@ def load_html_and_subject(html_path: Path, json_path: Path) -> tuple[str, str]:
             if isinstance(s, str) and s.strip():
                 subject = s.strip()
     if not subject:
-        subject = "Weekly — simulation AI & digital twins"
+        from rom_newsletter.topic import load_topic, load_topic_for_run
+
+        if topic_path is not None and topic_path.is_file():
+            subject = load_topic(topic_path).buttondown_fallback_subject
+        else:
+            subject = load_topic_for_run(project_root(), None).buttondown_fallback_subject
     return html, subject
 
 
@@ -154,6 +164,12 @@ def main(argv: list[str] | None = None) -> None:
         "--api-version",
         default=None,
         help="Optional X-API-Version header (e.g. 2026-04-01)",
+    )
+    p.add_argument(
+        "--topic",
+        type=Path,
+        default=None,
+        help="Topic profile JSON (fallback subject when JSON has no subject; default: env or <repo>/topic.json)",
     )
     args = p.parse_args(argv)
     stamp = args.week_date.strip()

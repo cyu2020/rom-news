@@ -1,6 +1,6 @@
 """Fetch article URLs from vendor newsroom listing pages (Webflow HTML, sitemaps, or static site cards).
 
-Complements broad Tavily search for sources with ``newsroom_listing: true`` in ``sources.json``
+Optional direct discovery for sources with ``newsroom_listing: true`` in ``sources.json``
 (same idea as per-source RSS: direct discovery for that vendor).
 
 Supported ``sources.json`` ``id`` values: ``physicsx``, ``neural-concept``, ``emmi-ai``, ``siemens``,

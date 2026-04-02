@@ -8,6 +8,7 @@ from openai import OpenAI
 from pydantic import BaseModel, Field
 
 from rom_newsletter.config import api_base_url, get_token
+from rom_newsletter.topic import TopicProfile
 
 
 class LinkRef(BaseModel):
@@ -35,6 +36,40 @@ class NewsletterDraft(BaseModel):
 
 
 _JSON_FENCE = re.compile(r"```(?:json)?\s*([\s\S]*?)```", re.IGNORECASE)
+
+_COMPOSE_HARD_RULES = """Hard rules:
+- Use ONLY the facts implied by the provided search excerpts. Do not invent venues, dates, product names, or paper titles that are not supported by the excerpts.
+- Every substantive claim must be traceable to at least one provided URL. Prefer citing by paraphrasing the excerpt, not by guessing details.
+- If excerpts are thin for one track, write shorter subsections there rather than speculating."""
+
+_COMPOSE_JSON_STRUCTURE = """Structure — output a single JSON object (no markdown, no prose outside JSON) with exactly this shape (industry_news is listed first to reflect editorial priority):
+{
+  "subject": "email subject line, under 90 characters",
+  "industry_news": {
+    "intro": "short intro for the Industry News block",
+    "subsections": [
+      {
+        "title": "subsection heading",
+        "body": "1-2 short paragraphs; separate paragraphs with a blank line",
+        "links": [{"url": "https://...", "label": "optional short label"}]
+      }
+    ]
+  },
+  "research_papers": {
+    "intro": "short intro for the Research Papers block; paragraphs separated by a blank line if needed",
+    "subsections": [ same shape as industry_news subsections ]
+  }
+}"""
+
+
+def _compose_system_prompt(topic: TopicProfile) -> str:
+    return (
+        f"{topic.compose.editor_intro}\n\n"
+        f"{_COMPOSE_HARD_RULES}\n\n"
+        f"{topic.compose.subject_rules}\n\n"
+        f"{_COMPOSE_JSON_STRUCTURE}\n\n"
+        f"{topic.compose.classification_block}"
+    )
 
 
 def _strip_json_payload(text: str) -> str:
@@ -84,46 +119,9 @@ def compose_newsletter(
     industry_bundle: str,
     week_hint: str,
     refine: bool = False,
+    topic: TopicProfile,
 ) -> NewsletterDraft:
-    sys_prompt = """You are an editor writing a concise weekly briefing for engineers and researchers working in reduced-order modeling (ROM), scientific machine learning (SciML), and digital twins.
-
-Hard rules:
-- Use ONLY the facts implied by the provided search excerpts. Do not invent venues, dates, product names, or paper titles that are not supported by the excerpts.
-- Every substantive claim must be traceable to at least one provided URL. Prefer citing by paraphrasing the excerpt, not by guessing details.
-- If excerpts are thin for one track, write shorter subsections there rather than speculating.
-
-Subject line ("subject" field):
-- Under 90 characters. Lead with the week's strongest industry/vendor angles when the Industry News excerpts support them; only foreground research paper titles when industry material is thin.
-- Do NOT use generic series boilerplate such as "ROM/SciML Weekly", "ROM / SciML", or "ROM, SciML, and digital twins weekly". Write a concrete headline (e.g. product/partnership themes, simulation platforms) instead.
-
-Structure — output a single JSON object (no markdown, no prose outside JSON) with exactly this shape (industry_news is listed first to reflect editorial priority):
-{
-  "subject": "email subject line, under 90 characters",
-  "industry_news": {
-    "intro": "short intro for the Industry News block",
-    "subsections": [
-      {
-        "title": "subsection heading",
-        "body": "1-2 short paragraphs; separate paragraphs with a blank line",
-        "links": [{"url": "https://...", "label": "optional short label"}]
-      }
-    ]
-  },
-  "research_papers": {
-    "intro": "short intro for the Research Papers block; paragraphs separated by a blank line if needed",
-    "subsections": [ same shape as industry_news subsections ]
-  }
-}
-
-Classification (pre-split inputs):
-- The **Research Papers excerpts** block below is tagged from sources as academic/papers (e.g. arXiv). Base "research_papers" ONLY on that block. Do not move vendor press into research unless it clearly appears there.
-- The **Industry News excerpts** block is tagged from sources as industry/vendor. Base "industry_news" ONLY on that block.
-- Put arXiv/preprints and academic items under "research_papers" using only URLs from the Research Papers block.
-- Put vendor press, product news, blogs, and commercial announcements under "industry_news" **only when** the excerpt clearly relates to our themes: reduced-order modeling, SciML, physics-informed / physics-based ML, neural operators / surrogates, digital or virtual twins, CAE/simulation platforms (e.g. twin builder, Omniverse, Modulus, Simcenter), or AI applied to engineering simulation / physics.
-- **Omit** industry subsections about unrelated topics (e.g. pure clinical trials with no simulation angle, generic enterprise IT, consumer hardware) unless the excerpt explicitly ties to simulation, twins, or physics/CAE AI.
-- Prefer fewer, stronger industry subsections over padding with weak matches.
-- Each of "research_papers" and "industry_news" must have between 1 and 5 subsections (inclusive).
-- Each subsection's "links" should list the 1-3 most relevant URLs from the excerpts that support it (URLs must appear in the corresponding block)."""
+    sys_prompt = _compose_system_prompt(topic)
 
     user_prompt = (
         f"Week focus (hint): {week_hint}\n\n"
@@ -161,6 +159,7 @@ Classification (pre-split inputs):
             draft=draft,
             research_bundle=research_bundle,
             industry_bundle=industry_bundle,
+            topic=topic,
         )
 
     return draft
@@ -173,11 +172,16 @@ def _refine_pass(
     draft: NewsletterDraft,
     research_bundle: str,
     industry_bundle: str,
+    topic: TopicProfile,
 ) -> NewsletterDraft:
     payload = draft.model_dump()
-    sys_prompt = """You review a newsletter JSON draft against raw search excerpts only.
-Tasks: remove or soften any claim not clearly supported; fix link lists so every URL appears in excerpts; keep two major sections (industry_news, research_papers) with 1-5 subsections each. Preserve subject-line rules: no "ROM/SciML Weekly"-style boilerplate; industry-led subject when excerpts support it.
-Reply with a single JSON object of the same schema only. No markdown."""
+    sys_prompt = (
+        "You review a newsletter JSON draft against raw search excerpts only.\n"
+        "Tasks: remove or soften any claim not clearly supported; fix link lists so every URL appears in excerpts; "
+        "keep two major sections (industry_news, research_papers) with 1-5 subsections each. "
+        f"{topic.compose.refine_system_extra}\n"
+        "Reply with a single JSON object of the same schema only. No markdown."
+    )
 
     user_prompt = (
         "## Industry News excerpts\n"

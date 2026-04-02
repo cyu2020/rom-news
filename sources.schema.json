@@ -40,7 +40,7 @@
         },
         "kind": {
           "type": "string",
-          "description": "Tavily query profile: arxiv | nvidia | siemens | ansys | generic (or inferred from URL host).",
+          "description": "Source kind hint: arxiv | nvidia | siemens | ansys | generic (or inferred from URL host).",
           "minLength": 1
         },
         "rss": {
@@ -55,7 +55,7 @@
         },
         "newsroom_listing": {
           "type": "boolean",
-          "description": "When true, use built-in discovery for id physicsx, neural-concept, emmi-ai, siemens, p1-ai, luminary, vinci4d, or akselos (see newsroom_listings.py) instead of relying on that domain from Tavily alone."
+          "description": "When true, use built-in discovery for id physicsx, neural-concept, emmi-ai, siemens, p1-ai, luminary, vinci4d, or akselos (see newsroom_listings.py)."
         }
       }
     }

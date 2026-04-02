@@ -3,14 +3,8 @@ from __future__ import annotations
 import email.utils
 import json
 import re
-from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timezone
 from typing import Any
-from urllib.parse import urlparse
-
-import httpx
-
-from rom_newsletter.search import SearchHit
 
 _MAX_HTML_BYTES = 600_000
 _UA = (
@@ -151,30 +145,6 @@ def _datetime_from_json_ld(html: str) -> datetime | None:
     return None
 
 
-def published_datetime_from_search_item(item: dict[str, Any]) -> datetime | None:
-    """If the search API includes a publish time on a result dict, parse it."""
-    for key in (
-        "published_date",
-        "published_time",
-        "published",
-        "publishedAt",
-        "pub_date",
-        "date",
-        "article_date",
-    ):
-        v = item.get(key)
-        if isinstance(v, str) and v.strip():
-            dt = parse_datetime_string(v)
-            if dt is not None:
-                return dt
-        if isinstance(v, (int, float)):
-            try:
-                return datetime.fromtimestamp(float(v), tz=timezone.utc)
-            except (OSError, ValueError, OverflowError):
-                continue
-    return None
-
-
 def extract_published_datetime(html: str) -> datetime | None:
     """Best-effort published time from raw HTML (structured meta → JSON-LD → visible English dates)."""
     chunk = html if len(html) <= _MAX_HTML_BYTES else html[:_MAX_HTML_BYTES]
@@ -190,108 +160,3 @@ def extract_published_datetime(html: str) -> datetime | None:
     # Webflow / CMS: date in body text; strip comments so we do not match "Last Published" in <!-- ... -->
     visible = _strip_html_comments(chunk)
     return _datetime_from_english_matches(visible)
-
-
-def _fetch_html(url: str, *, timeout: float) -> str | None:
-    try:
-        p = urlparse(url)
-        if p.scheme not in ("http", "https") or not p.netloc:
-            return None
-    except ValueError:
-        return None
-    headers = {"User-Agent": _UA, "Accept": "text/html,application/xhtml+xml;q=0.9,*/*;q=0.8"}
-    try:
-        with httpx.Client(timeout=timeout, follow_redirects=True, headers=headers) as client:
-            r = client.get(url)
-            if r.status_code >= 400:
-                return None
-            return r.text
-    except httpx.HTTPError:
-        return None
-
-
-def _classify_hit(
-    hit: SearchHit,
-    start: datetime,
-    end: datetime,
-    *,
-    timeout: float,
-) -> tuple[str, SearchHit | None]:
-    """Return ('keep', hit) | ('drop', None) | ('no_date', hit)."""
-    html = _fetch_html(hit.url, timeout=timeout)
-    if html is None:
-        return ("no_date", hit)
-    dt = extract_published_datetime(html)
-    if dt is None:
-        return ("no_date", hit)
-    if start <= dt <= end:
-        return ("keep", hit)
-    return ("drop", None)
-
-
-def filter_tavily_hits_by_page_date(
-    hits: list[SearchHit],
-    start: datetime,
-    end: datetime,
-    *,
-    max_workers: int = 6,
-    timeout: float = 15.0,
-    drop_undated: bool = True,
-) -> tuple[list[SearchHit], dict[str, Any]]:
-    """
-    Drop Tavily hits whose fetched HTML shows a published date outside [start, end] UTC.
-    By default, hits with no parseable date are also dropped. Set *drop_undated* to False to keep them.
-    """
-    if not hits:
-        return [], {
-            "enabled": True,
-            "input_count": 0,
-            "output_count": 0,
-            "dropped_outside_window": 0,
-            "kept_no_parseable_date": 0,
-            "kept_inside_window": 0,
-            "dropped_undated": 0,
-        }
-
-    workers = max(1, min(32, max_workers))
-    stats: dict[str, Any] = {
-        "enabled": True,
-        "input_count": len(hits),
-        "dropped_outside_window": 0,
-        "kept_no_parseable_date": 0,
-        "kept_inside_window": 0,
-        "dropped_undated": 0,
-        "drop_undated": drop_undated,
-    }
-    slot: list[SearchHit | None] = [None] * len(hits)
-    with ThreadPoolExecutor(max_workers=workers) as ex:
-        fut_to_idx = {
-            ex.submit(_classify_hit, h, start, end, timeout=timeout): i
-            for i, h in enumerate(hits)
-        }
-        for fut in as_completed(fut_to_idx):
-            i = fut_to_idx[fut]
-            orig = hits[i]
-            try:
-                kind, hit = fut.result()
-            except Exception:
-                stats["kept_no_parseable_date"] += 1
-                slot[i] = orig
-                continue
-            if kind == "keep":
-                stats["kept_inside_window"] += 1
-                slot[i] = hit
-            elif kind == "no_date":
-                if drop_undated:
-                    stats["dropped_undated"] += 1
-                    slot[i] = None
-                else:
-                    stats["kept_no_parseable_date"] += 1
-                    slot[i] = hit
-            else:
-                stats["dropped_outside_window"] += 1
-                slot[i] = None
-
-    out = [h for h in slot if h is not None]
-    stats["output_count"] = len(out)
-    return out, stats
