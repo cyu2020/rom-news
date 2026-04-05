@@ -13,7 +13,7 @@ from rom_newsletter.compose import (
     newsletter_to_json_dict,
     openai_client,
 )
-from rom_newsletter.config import default_model, project_root
+from rom_newsletter.config import llm_model, project_root
 from rom_newsletter.dates import utc_window_for_week
 from rom_newsletter.history import load_seen_urls, merge_history
 from rom_newsletter.newsroom_listings import fetch_newsroom_hits
@@ -87,7 +87,7 @@ def _collect_feed_entries(sources: list) -> list[tuple[str, frozenset[str]]]:
 
 def main(argv: list[str] | None = None) -> None:
     p = argparse.ArgumentParser(
-        description="Build a weekly ROM / SciML / Digital Twins newsletter via AI Builders API."
+        description="Build a weekly ROM / SciML / Digital Twins newsletter via an OpenAI-compatible LLM API (LLM_BASE_URL, LLM_API_KEY, LLM_MODEL)."
     )
     p.add_argument(
         "--sources",
@@ -117,7 +117,7 @@ def main(argv: list[str] | None = None) -> None:
     p.add_argument(
         "--model",
         default=None,
-        help="Chat model id (default: env ROM_NEWSLETTER_MODEL or grok-4-fast)",
+        help="Chat model id (overrides LLM_MODEL when set)",
     )
     p.add_argument(
         "--arxiv-max",
@@ -215,7 +215,6 @@ def main(argv: list[str] | None = None) -> None:
     week_d = _parse_date(args.week_date)
     week_label = f"Week of {week_d.isoformat()}"
     stamp = week_d.isoformat()
-    model = args.model or default_model()
 
     if args.window_days < 1:
         print("--window-days must be >= 1", file=sys.stderr)
@@ -347,6 +346,12 @@ def main(argv: list[str] | None = None) -> None:
             print(f"Theme filter: {theme_stats}")
         print(f"Wrote {search_path}")
         return
+
+    try:
+        model = args.model.strip() if args.model else llm_model()
+    except RuntimeError as e:
+        print(e, file=sys.stderr)
+        sys.exit(1)
 
     research_bundle, industry_bundle = hits_to_split_bundle_text(merged)
     client = openai_client()

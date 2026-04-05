@@ -5,9 +5,6 @@ from pathlib import Path
 
 from dotenv import load_dotenv
 
-_DEFAULT_BASE = "https://space.ai-builders.com/backend/v1"
-_DEFAULT_MODEL = "grok-4-fast"
-
 
 def project_root() -> Path:
     """Repo root (parent of src/)."""
@@ -20,24 +17,37 @@ def load_env() -> None:
         load_dotenv(env_path)
 
 
-def get_token() -> str:
+def llm_base_url() -> str:
+    """OpenAI-compatible API base URL (no trailing slash). Required: ``LLM_BASE_URL``."""
     load_env()
-    token = os.environ.get("AI_BUILDER_TOKEN", "").strip()
-    if not token:
+    url = os.environ.get("LLM_BASE_URL", "").strip()
+    if not url:
         raise RuntimeError(
-            "AI_BUILDER_TOKEN is not set. Add it to .env in the project root."
+            "LLM_BASE_URL is not set. Add it to .env (e.g. AI Builders or OpenRouter `/v1` base)."
         )
-    return token
+    return url.rstrip("/")
 
 
-def api_base_url() -> str:
+def llm_api_key() -> str:
+    """API key for the chat endpoint. Required: ``LLM_API_KEY``."""
     load_env()
-    return os.environ.get("AI_BUILDERS_BASE_URL", _DEFAULT_BASE).rstrip("/")
+    key = os.environ.get("LLM_API_KEY", "").strip()
+    if not key:
+        raise RuntimeError(
+            "LLM_API_KEY is not set. Add it to .env in the project root."
+        )
+    return key
 
 
-def default_model() -> str:
+def llm_model() -> str:
+    """Default chat model id. Required: ``LLM_MODEL`` (unless you pass ``--model``)."""
     load_env()
-    return os.environ.get("ROM_NEWSLETTER_MODEL", _DEFAULT_MODEL).strip() or _DEFAULT_MODEL
+    m = os.environ.get("LLM_MODEL", "").strip()
+    if not m:
+        raise RuntimeError(
+            "LLM_MODEL is not set. Add it to .env or pass --model on the command line."
+        )
+    return m
 
 
 def get_buttondown_api_key() -> str:

@@ -14,6 +14,7 @@ During your interaction with the user, if you find anything reusable in this pro
 - If ./.venv does not exist, use uv to create one with python 3.13. 
 - The `uv` package manager is available at `/home/cheng-yu/.local/bin/uv`.
 - Always use `/home/cheng-yu/.local/bin/uv pip install` to install any new packages needed.
+- LLM config uses **`LLM_BASE_URL`**, **`LLM_API_KEY`**, **`LLM_MODEL`** (no defaults). OpenAI-compatible **`chat/completions`**; AI Builders and OpenRouter are examples—set base URL accordingly.
 
 ## Cursor learned
 - **Tavily / `POST /search/`** was removed from this project; discovery is **arXiv + RSS + optional newsroom** only. **`topic.json`** no longer has a `tavily` section.

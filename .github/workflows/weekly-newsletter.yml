@@ -51,7 +51,9 @@ jobs:
 
       - name: Generate newsletter
         env:
-          AI_BUILDER_TOKEN: ${{ secrets.AI_BUILDER_TOKEN }}
+          LLM_BASE_URL: ${{ secrets.LLM_BASE_URL }}
+          LLM_API_KEY: ${{ secrets.LLM_API_KEY }}
+          LLM_MODEL: ${{ secrets.LLM_MODEL }}
           # Optional repo variable: unique User-Agent reduces arXiv 429 rate limits from shared CI IPs.
           ROM_NEWSLETTER_ARXIV_USER_AGENT: ${{ vars.ROM_NEWSLETTER_ARXIV_USER_AGENT }}
         run: |

@@ -7,7 +7,7 @@ from typing import Any
 from openai import OpenAI
 from pydantic import BaseModel, Field
 
-from rom_newsletter.config import api_base_url, get_token
+from rom_newsletter.config import llm_api_key, llm_base_url
 from rom_newsletter.topic import TopicProfile
 
 
@@ -210,8 +210,8 @@ def _refine_pass(
 
 def openai_client() -> OpenAI:
     return OpenAI(
-        base_url=api_base_url(),
-        api_key=get_token(),
+        base_url=llm_base_url(),
+        api_key=llm_api_key(),
     )
 
 

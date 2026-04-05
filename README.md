@@ -13,7 +13,13 @@ Generates a weekly-style briefing on **reduced-order modeling**, **scientific ma
 ## Setup
 
 - Python **3.11+** (project uses **3.13** in `.venv` per team convention).
-- API token **`AI_BUILDER_TOKEN`** in `.env` at the repo root (never commit this file).
+- **LLM (OpenAI-compatible chat API)** — set the three variables below in `.env` at the repo root (never commit this file). Use any provider that exposes **`POST …/chat/completions`** with the OpenAI SDK (e.g. **OpenRouter** `https://openrouter.ai/api/v1`, or a local OpenAI-compatible server). There are **no** built-in defaults; every value must come from the environment.
+
+| Variable | Purpose |
+|----------|---------|
+| `LLM_BASE_URL` | API base URL including `/v1` (no trailing slash). |
+| `LLM_API_KEY` | Bearer token for that API. |
+| `LLM_MODEL` | Default model id for compose (override per run with `--model`). |
 
 ```bash
 cd /path/to/rom-news
@@ -22,12 +28,12 @@ uv pip install --python .venv/bin/python -e .
 source .venv/bin/activate   # optional; or invoke .venv/bin/python -m rom_newsletter
 ```
 
-Optional environment variables:
+**`--dry-run-search`** does not call the LLM, so `LLM_*` are not required for that mode. A **full** run needs all three `LLM_*` variables (or `--model` plus `LLM_BASE_URL` and `LLM_API_KEY`).
+
+Other environment variables:
 
 | Variable | Purpose |
 |----------|---------|
-| `AI_BUILDERS_BASE_URL` | Override API base (default `https://space.ai-builders.com/backend/v1`) |
-| `ROM_NEWSLETTER_MODEL` | Default chat model (default `grok-4-fast`) |
 | `BUTTONDOWN_API_KEY` | Buttondown token for `rom-newsletter-buttondown` (local or CI) |
 | `BUTTONDOWN_API_VERSION` | Optional `X-API-Version` for Buttondown (e.g. `2026-04-01`) |
 | `ROM_NEWSLETTER_ARXIV_READ_TIMEOUT` | Override arXiv HTTP **read** timeout in seconds (default **180**; raise in CI if `export.arxiv.org` is slow) |
@@ -66,7 +72,7 @@ rom-newsletter --arxiv-max 100
 
 | Flag | Purpose |
 |------|---------|
-| `--model gemini-2.5-pro` | Override chat model |
+| `--model <id>` | Override `LLM_MODEL` for this run |
 | `--arxiv-max N` | Max results from the arXiv API (1–2000; default `25`) |
 | `--no-arxiv` | Skip arXiv API |
 | `--no-rss` | Skip RSS feeds |
@@ -138,7 +144,9 @@ The workflow [`.github/workflows/weekly-newsletter.yml`](.github/workflows/weekl
 
 | Secret | Purpose |
 |--------|---------|
-| `AI_BUILDER_TOKEN` | Same as local `.env`; required for the LLM + discovery. |
+| `LLM_BASE_URL` | Same as local `.env` (e.g. OpenRouter base URL). |
+| `LLM_API_KEY` | Same as local `.env`; required for compose. |
+| `LLM_MODEL` | Default model id for the workflow run. |
 | `BUTTONDOWN_API_KEY` | Buttondown API token ([API keys](https://buttondown.com/keys)); creates the email with `status: about_to_send` (send to subscribers). |
 
 4. **Config in the repo** — Keep [`sources.json`](sources.json) at the repo root (the workflow does not pass `--sources`). Commit `templates/` and anything else `rom-newsletter` needs the same way you do locally.
@@ -168,7 +176,7 @@ When the run succeeds, **`dist/`** is uploaded as a workflow artifact. If **Gene
 
 | Symptom | What to check |
 |---------|----------------|
-| **Process completed with exit code 1** | Open the **Generate newsletter** step log (that is usually what failed). Confirm **`AI_BUILDER_TOKEN`** is set under Actions secrets and matches a valid token. Run the same command locally with the same `--date`. |
+| **Process completed with exit code 1** | Open the **Generate newsletter** step log (that is usually what failed). Confirm **`LLM_BASE_URL`**, **`LLM_API_KEY`**, and **`LLM_MODEL`** are set under Actions secrets and match a working local `.env`. Run the same command locally with the same `--date`. |
 | **arXiv / API errors** | **503**, **429** (rate limit), or **read timeouts** from `export.arxiv.org`: the client retries with backoff, **`Retry-After`**, a descriptive **User-Agent**, and longer waits for **429**. Set **`ROM_NEWSLETTER_ARXIV_USER_AGENT`** to a unique string for your project in CI. Set **`ROM_NEWSLETTER_ARXIV_READ_TIMEOUT`** if reads are slow. Use **`--no-arxiv`** in the workflow if arXiv stays flaky. |
 | **Node.js 20 deprecation annotations** | The workflow sets **`FORCE_JAVASCRIPT_ACTIONS_TO_NODE24`** and pins newer action versions; warnings can still appear until GitHub changes defaults—see the [GitHub changelog](https://github.blog/changelog/2025-09-19-deprecation-of-node-20-on-github-actions-runners/). |
 | **No artifact / “No files were found”** | Normal if generation failed: **`dist/`** was never created. Fix the failing step first; the artifact upload will not fail the job when `dist/` is absent. |

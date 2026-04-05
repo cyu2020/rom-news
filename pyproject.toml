@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "rom-newsletter"
 version = "0.1.0"
-description = "Weekly newsletter generator for ROM, SciML, and digital twins (arXiv, RSS, newsroom, AI Builders chat)"
+description = "Weekly newsletter generator for ROM, SciML, and digital twins (arXiv, RSS, newsroom, OpenAI-compatible LLM)"
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
