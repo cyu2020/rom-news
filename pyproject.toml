@@ -7,6 +7,7 @@ name = "rom-newsletter"
 version = "0.1.0"
 description = "Weekly newsletter generator for ROM, SciML, and digital twins (arXiv, RSS, newsroom, OpenAI-compatible LLM)"
 readme = "README.md"
+license = { text = "MIT" }
 requires-python = ">=3.11"
 dependencies = [
     "openai>=1.40.0",
