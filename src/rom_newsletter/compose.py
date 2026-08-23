@@ -37,6 +37,8 @@ class NewsletterDraft(BaseModel):
 
 _JSON_FENCE = re.compile(r"```(?:json)?\s*([\s\S]*?)```", re.IGNORECASE)
 
+_MAX_REPAIR_ATTEMPTS = 3
+
 _COMPOSE_HARD_RULES = """Hard rules:
 - Use ONLY the facts implied by the provided search excerpts. Do not invent venues, dates, product names, or paper titles that are not supported by the excerpts.
 - Every substantive claim must be traceable to at least one provided URL. Prefer citing by paraphrasing the excerpt, not by guessing details.
@@ -86,20 +88,34 @@ def _parse_newsletter_json(text: str) -> NewsletterDraft:
     return NewsletterDraft.model_validate(data)
 
 
-def _heal_json_llm(client: OpenAI, model: str, broken: str) -> str:
+def _heal_json_llm(
+    client: OpenAI,
+    model: str,
+    broken: str,
+    *,
+    previous_error: str = "",
+) -> str:
     fix = client.chat.completions.create(
         model=model,
         temperature=0.1,
         messages=[
             {
                 "role": "system",
-                "content": "Reply with a single valid JSON object only. No markdown fence, no commentary.",
+                "content": (
+                    "Reply with a single valid JSON object only. No markdown fence, no commentary. "
+                    "Schema: object with subject and two sections (industry_news, research_papers); "
+                    "each section has intro and a subsections list with 1-5 items; "
+                    "each subsection has title, body, links. Never emit an empty subsections list."
+                ),
             },
             {
                 "role": "user",
                 "content": (
                     "The following text was intended as JSON for a newsletter but is invalid. "
-                    "Fix escaping and structure so it parses. Preserve all field values when possible.\n\n"
+                    "Fix escaping and structure so it parses and passes schema validation. "
+                    "Preserve all field values when possible.\n"
+                    + (f"Validation error to fix: {previous_error}\n" if previous_error else "")
+                    + "\nBroken text:\n"
                     + broken[:120000]
                 ),
             },
@@ -128,7 +144,10 @@ def compose_newsletter(
         "## Industry News (excerpts — use only for industry_news JSON)\n"
         f"{industry_bundle}\n\n"
         "## Research Papers (excerpts — use only for research_papers JSON)\n"
-        f"{research_bundle}\n"
+        f"{research_bundle}\n\n"
+        "A track may legitimately have no excerpts this week. "
+        "If a section has no excerpts, still provide at least one subsection with a short, honest status line "
+        "(for example: 'No notable updates this week'). Never emit an empty subsections list.\n"
     )
 
     def _call(temperature: float = 0.45) -> str:
@@ -146,11 +165,26 @@ def compose_newsletter(
         return content
 
     raw = _call()
+    draft: NewsletterDraft | None = None
+    previous_error = ""
     try:
         draft = _parse_newsletter_json(raw)
-    except (json.JSONDecodeError, ValueError):
-        healed = _heal_json_llm(client, model, raw)
-        draft = _parse_newsletter_json(healed)
+    except (json.JSONDecodeError, ValueError) as exc:
+        previous_error = str(exc)
+        text = raw
+        for _ in range(_MAX_REPAIR_ATTEMPTS):
+            healed = _heal_json_llm(client, model, text, previous_error=previous_error)
+            try:
+                draft = _parse_newsletter_json(healed)
+                break
+            except (json.JSONDecodeError, ValueError) as exc2:
+                previous_error = str(exc2)
+                text = healed  # repair the latest output on the next attempt
+    if draft is None:
+        raise RuntimeError(
+            "Model output could not be parsed or schema-validated after "
+            f"{_MAX_REPAIR_ATTEMPTS} repair attempts. Last error: {previous_error[:500]}"
+        )
 
     if refine:
         draft = _refine_pass(
