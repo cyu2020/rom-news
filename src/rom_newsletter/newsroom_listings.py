@@ -632,7 +632,10 @@ def fetch_newsroom_hits(
                         + " (continuing with WP news posts only)",
                     }
                 )
-
+        elif pid == "akselos":
+            candidates = parse_akselos_wp_posts(fetched)
+        else:
+            candidates = parse_emmi_news(fetched)
         kw = f"newsroom:{pid}"
         n_raw = len(candidates)
         for url, title, listing_dt in candidates:
