@@ -17,6 +17,8 @@ The `id` field on a source row selects a parser. The internal map is `_parser_fo
 | `vinci4d` | `parse_vinci_wp_posts` | WordPress REST API (`/wp-json/wp/v2/posts`) — Blog/News posts with publish dates; mirrors `akselos`. HTML listing (`getvinci.ai/news`→`/blog`) is behind Cloudflare challenges/403 from some robot IPs, so the API is used instead |
 | `akselos` | `parse_akselos_wp_posts` | WordPress REST API (`/wp-json/wp/v2/posts`) — complete Blogs+In-the-news list with publish dates, not the category-filtered listing page |
 
+In-window newsroom hits are additionally enriched with the article's `og:description`/meta description (best-effort, threaded) so the theme filter scores on real article content, not just the often-short listing title. On-topic articles with non-descriptive headlines (e.g. benchmarks, partnerships) are therefore retained.
+
 Unknown or missing `id` with `newsroom_listing: true` produces an error entry in the newsroom metadata (see `fetch_newsroom_hits`).
 
 ## Adding a new vendor

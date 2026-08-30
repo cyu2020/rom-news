@@ -62,6 +62,27 @@ def _article_title_from_html(html: str) -> str | None:
     return None
 
 
+def _article_description_from_html(html: str) -> str | None:
+    """Best-effort article description: og:description or meta description.
+
+    Used to give the theme filter real content for sources whose listing only provides a
+    short title (e.g. physicsx cards) so on-topic articles with non-descriptive headlines
+    still score.
+    """
+    for pat in (
+        r'<meta[^>]+property=["\']og:description["\'][^>]+content=["\']([^"\']+)["\']',
+        r'<meta[^>]+content=["\']([^"\']+)["\'][^>]+property=["\']og:description["\']',
+        r'<meta[^>]+name=["\']description["\'][^>]+content=["\']([^"\']+)["\']',
+        r'<meta[^>]+content=["\']([^"\']+)["\'][^>]+name=["\']description["\']',
+    ):
+        m = re.search(pat, html, re.I)
+        if m:
+            t = m.group(1).strip()
+            if t:
+                return t[:600]
+    return None
+
+
 def _parse_dmy_slash(s: str) -> datetime | None:
     m = re.match(r"^(\d{1,2})/(\d{1,2})/(\d{4})$", s.strip())
     if not m:
@@ -650,11 +671,14 @@ def fetch_newsroom_hits(
 
     resolved_idx: dict[int, datetime | None] = {}
     resolved_title: dict[int, str] = {}
+    resolved_desc: dict[int, str] = {}
 
     if need_fetch:
         tw = max(1, min(32, max_workers))
 
-        def fetch_one(item: tuple[int, str]) -> tuple[int, datetime | None, str | None]:
+        def fetch_one(
+            item: tuple[int, str],
+        ) -> tuple[int, datetime | None, str | None, str | None]:
             idx, article_url = item
             try:
                 html = _fetch_html(article_url, timeout)
@@ -662,21 +686,25 @@ def fetch_newsroom_hits(
                     idx,
                     extract_published_datetime(html),
                     _article_title_from_html(html),
+                    _article_description_from_html(html),
                 )
             except (httpx.HTTPError, OSError):
-                return idx, None, None
+                return idx, None, None, None
 
         with ThreadPoolExecutor(max_workers=tw) as ex:
             futs = [ex.submit(fetch_one, x) for x in need_fetch]
             for fut in as_completed(futs):
-                idx, dt, title_opt = fut.result()
+                idx, dt, title_opt, desc_opt = fut.result()
                 resolved_idx[idx] = dt
                 if title_opt:
                     resolved_title[idx] = title_opt
+                if desc_opt:
+                    resolved_desc[idx] = desc_opt
 
     hits: list[SearchHit] = []
     dropped_no_date = 0
     dropped_outside = 0
+    in_window_rows: list[tuple[int, object, str, str, str, str, datetime]] = []
     for i, (s, kw, url, title, listing_dt) in enumerate(pending):
         dt = listing_dt if listing_dt is not None else resolved_idx.get(i)
         if i in resolved_title:
@@ -687,8 +715,40 @@ def fetch_newsroom_hits(
         if not (start_utc <= dt <= end_utc):
             dropped_outside += 1
             continue
+        in_window_rows.append((i, s, kw, url, title, listing_dt, dt))
+
+    # Enrich in-window hits with an article description so the theme filter scores on real
+    # content, not just the (sometimes vague) listing title. Only rows whose listing already
+    # carried a date need a new fetch (date-less rows were fetched above and got description
+    # during that pass). Best-effort: failures simply leave no description.
+    enrich: list[tuple[int, str]] = [
+        (i, url)
+        for (i, s, kw, url, title, listing_dt, dt) in in_window_rows
+        if listing_dt is not None and i not in resolved_desc
+    ]
+    if enrich:
+        tw = max(1, min(32, max_workers))
+
+        def fetch_desc(item: tuple[int, str]) -> tuple[int, str | None]:
+            idx, article_url = item
+            try:
+                return idx, _article_description_from_html(
+                    _fetch_html(article_url, timeout)
+                )
+            except (httpx.HTTPError, OSError):
+                return idx, None
+
+        with ThreadPoolExecutor(max_workers=tw) as ex:
+            futs = [ex.submit(fetch_desc, x) for x in enrich]
+            for fut in as_completed(futs):
+                idx, desc_opt = fut.result()
+                if desc_opt:
+                    resolved_desc[idx] = desc_opt
+
+    for (i, s, kw, url, title, listing_dt, dt) in in_window_rows:
         date_note = dt.date().isoformat()
-        content = f"{title}\nDate (UTC): {date_note}"
+        desc = resolved_desc.get(i)
+        content = f"{title}\n{desc}\nDate (UTC): {date_note}" if desc else f"{title}\nDate (UTC): {date_note}"
         hits.append(
             SearchHit(
                 url=url,
