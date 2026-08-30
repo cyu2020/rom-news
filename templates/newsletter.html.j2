@@ -10,6 +10,7 @@
     h2.major { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; font-size: 1.25rem; font-weight: 600; margin: 36px 0 12px; color: #111; letter-spacing: -0.02em; border-bottom: 2px solid #1c3d5c; padding-bottom: 8px; }
     h2.major:first-of-type { margin-top: 0; }
     .major-intro p { margin: 0 0 12px; }
+    .issue-label { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; font-size: 0.78rem; letter-spacing: 0.04em; text-transform: uppercase; color: #8a8578; margin: 0 0 18px; padding-bottom: 14px; border-bottom: 1px solid #efece6; }
     h3.sub { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; font-size: 1.05rem; font-weight: 600; margin: 24px 0 8px; color: #1c3d5c; letter-spacing: -0.01em; }
     .section-body { margin: 0 0 10px; }
     .links { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; font-size: 0.9rem; margin: 0 0 20px; padding-left: 1.1em; color: #333; }
@@ -20,6 +21,9 @@
 <body>
   <!-- Subject and issue date come from the newsletter platform; body starts at section headings. -->
   <div class="wrap">
+{% if week_label %}
+    <p class="issue-label">{{ week_label }}</p>
+{% endif %}
     <h2 class="major">{{ industry_heading }}</h2>
     <div class="major-intro">
 {% for p in industry.intro_paras %}

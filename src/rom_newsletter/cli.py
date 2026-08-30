@@ -384,6 +384,7 @@ def main(argv: list[str] | None = None) -> None:
         template_dir=args.template_dir,
         industry_heading=topic.sections.industry_heading,
         research_heading=topic.sections.research_heading,
+        week_label=week_label,
     )
     html_path = out_dir / f"{base}.html"
     html_path.write_text(html_str, encoding="utf-8")
