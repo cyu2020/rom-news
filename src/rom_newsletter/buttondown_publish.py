@@ -161,6 +161,11 @@ def main(argv: list[str] | None = None) -> None:
         help="Load files and print subject + body length; do not call the API",
     )
     p.add_argument(
+        "--no-dedupe",
+        action="store_true",
+        help="Do not delete an earlier Buttondown email with the same week label before publishing",
+    )
+    p.add_argument(
         "--api-version",
         default=None,
         help="Optional X-API-Version header (e.g. 2026-04-01)",
@@ -187,6 +192,13 @@ def main(argv: list[str] | None = None) -> None:
     load_env()
     token = get_buttondown_api_key()
     api_ver = (args.api_version or os.environ.get("BUTTONDOWN_API_VERSION", "")).strip() or None
+    # Dedupe: our template renders "Week of <date>" at the top of the body. Before creating
+    # a new email for the same week, remove any earlier one so re-runs replace instead of
+    # stack. Skipped when the marker is missing from this HTML (e.g. an old template) to
+    # avoid deleting an unrelated week's email.
+    marker = f"Week of {stamp}"
+    if not args.no_dedupe and marker in html:
+        _delete_emails_containing(token, marker)
     try:
         out = publish_to_buttondown(
             html=html,
@@ -217,6 +229,46 @@ def main(argv: list[str] | None = None) -> None:
     eid = out.get("id", "?")
     st = out.get("status", "?")
     print(f"Buttondown email {eid} status={st}")
+
+
+def _delete_emails_containing(token: str, marker: str) -> list[str]:
+    """Delete previously created emails whose body contains *marker* (e.g. the week label).
+
+    The list endpoint returns all emails in one response. Only exact body matches on the
+    week marker are removed, so a re-run of the same week replaces its earlier email instead
+    of stacking duplicates; other weeks' emails are untouched.
+    Returns the ids of deleted emails.
+    """
+    headers = {"Authorization": f"Token {token}"}
+    deleted: list[str] = []
+    with httpx.Client(timeout=60.0, follow_redirects=True) as client:
+        page_url: str | None = BUTTONDOWN_EMAILS_URL
+        while page_url:
+            r = client.get(page_url, headers=headers)
+            r.raise_for_status()
+            data = r.json()
+            for email in data.get("results", []):
+                body = email.get("body") or ""
+                if marker not in body:
+                    continue
+                eid = email.get("id")
+                if not eid:
+                    continue
+                d = client.delete(f"{BUTTONDOWN_EMAILS_URL}/{eid}", headers=headers)
+                if d.status_code in (200, 204):
+                    deleted.append(eid)
+                    print(
+                        f"Removed prior duplicate email {eid} "
+                        f"(subject={email.get('subject', '')[:40]!r}, status={email.get('status')})",
+                        file=sys.stderr,
+                    )
+                else:
+                    print(
+                        f"Could not delete duplicate email {eid}: HTTP {d.status_code}",
+                        file=sys.stderr,
+                    )
+            page_url = data.get("next") or None
+    return deleted
 
 
 if __name__ == "__main__":
