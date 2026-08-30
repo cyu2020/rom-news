@@ -44,7 +44,7 @@
     {
       "id": "neural-concept",
       "label": "Neural Concept",
-      "url": "https://www.neuralconcept.com/resources?category_equal=%5B%22Press+Releases%22%5D",
+      "url": "https://www.neuralconcept.com/press-releases",
       "category": "industry",
       "kind": "generic",
       "newsroom_listing": true
@@ -76,7 +76,7 @@
     {
       "id": "vinci4d",
       "label": "Vinci4D",
-      "url": "https://www.getvinci.ai/news/",
+      "url": "https://www.getvinci.ai/blog/",
       "category": "industry",
       "kind": "generic",
       "newsroom_listing": true

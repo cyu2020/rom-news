@@ -9,12 +9,12 @@ The `id` field on a source row selects a parser. The internal map is `_parser_fo
 | `sources.json` `id` | Parser function | Notes |
 |---------------------|-----------------|-------|
 | `physicsx` | `parse_physicsx_newsroom` | Listing HTML from source `url` |
-| `neural-concept` | `parse_neural_concept_press` | Press HTML |
+| `neural-concept` | `parse_neural_concept_press` | Press releases index (`/press-releases`) |
 | `emmi-ai` | `parse_emmi_news` | Default branch for `emmi` |
 | `siemens` | `parse_siemens_news_sitemap` | Fetches fixed `news.siemens.com` en-us sitemap (not `url` body) |
 | `p1-ai` | `parse_p1_ai_homepage` | Press links from `p-1.ai` homepage |
 | `luminary` | `parse_luminary_press_resources` | Press cards on `luminary.ai/resources` |
-| `vinci4d` | `parse_vinci_news_listing` | `getvinci.ai/news` |
+| `vinci4d` | `parse_vinci_news_listing` | `getvinci.ai/blog` (redirects from `getvinci.ai/news`) |
 | `akselos` | `parse_akselos_resources_news` | News-filter resource hub |
 
 Unknown or missing `id` with `newsroom_listing: true` produces an error entry in the newsroom metadata (see `fetch_newsroom_hits`).

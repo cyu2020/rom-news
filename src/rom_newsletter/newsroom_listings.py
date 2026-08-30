@@ -111,32 +111,42 @@ def parse_physicsx_newsroom(html: str, listing_url: str) -> list[tuple[str, str,
     return out
 
 
-def parse_neural_concept_press(html: str) -> list[tuple[str, str, None]]:
+def parse_neural_concept_press(html: str) -> list[tuple[str, str, datetime | None]]:
+    """Press-releases index at ``https://www.neuralconcept.com/press-releases``.
+
+    Each card renders ``n-blog_card-category`` (the publish date "July 1, 2026"),
+    ``n-blog_card-title`` and an ``n-blog_card-link`` to ``/press-release/<slug>/``.
+    The calendar date is on the listing, so no per-article fetch is needed.
+    """
     base = "https://www.neuralconcept.com"
-    out: list[tuple[str, str, None]] = []
+    out: list[tuple[str, str, datetime | None]] = []
     seen: set[str] = set()
     for block in html.split("w-dyn-item"):
-        cats = re.findall(
-            r">(Press Releases|Research|Webinars|Customer Stories|Blog|Articles)<",
-            block,
-        )
-        if not cats or cats[0] != "Press Releases":
+        lm = re.search(r'href="(/press-release/[^"]+)"', block)
+        if not lm:
             continue
-        m = re.search(r'href="(/post/[^"]+)"', block)
-        if not m:
-            continue
-        path = m.group(1)
-        url = urljoin(base, path)
+        path = lm.group(1)
+        url = urljoin(base, path.rstrip("/") + "/")
         if url in seen:
             continue
         seen.add(url)
+        dm = re.search(r'class="n-blog_card-category"[^>]*>([^<]+)<', block)
+        dt = None
+        if dm:
+            s = dm.group(1).strip()
+            for fmt in ("%B %d, %Y", "%b %d, %Y", "%d %B %Y"):
+                try:
+                    dt = datetime.strptime(s, fmt).replace(tzinfo=timezone.utc)
+                    break
+                except ValueError:
+                    continue
         tm = re.search(r'class="n-blog_card-title"[^>]*>([\s\S]*?)</div>', block)
         if tm:
             title = re.sub(r"<[^>]+>", "", tm.group(1))
             title = re.sub(r"\s+", " ", title).strip()
         else:
             title = path
-        out.append((url, title, None))
+        out.append((url, title, dt))
     return out
 
 
@@ -247,39 +257,42 @@ def parse_emmi_news(html: str) -> list[tuple[str, str, None]]:
     return out
 
 
-def _parse_luminary_mmddyyyy(s: str) -> datetime | None:
-    m = re.match(r"^(\d{2})\.(\d{2})\.(\d{4})$", s.strip())
-    if not m:
-        return None
-    mo, d, y = int(m.group(1)), int(m.group(2)), int(m.group(3))
-    try:
-        return datetime(y, mo, d, tzinfo=timezone.utc)
-    except ValueError:
-        return None
-
-
 def parse_luminary_press_resources(
     html: str, listing_url: str
 ) -> list[tuple[str, str, datetime | None]]:
-    """Luminary Astro listing: cards with ``data-tag="Press"``, MM.DD.YYYY date, ``/resources/...`` links."""
+    """Luminary Astro listing: press cards marked ``class="resource-card" data-category="Press"``.
+
+    The listing markup previously used ``data-tag="Press"`` + a ``MM.DD.YYYY`` span + ``<h3>``,
+    but now renders cards as ``<div class="resource-card" data-category="Press" ...>``
+    with an ``<a href="..." data-hover="card">``. Press cards link to ``/resources/...`` (or an
+    external press pickup), carry no calendar date on the listing, so each article page is
+    fetched downstream for its published timestamp.
+    """
     base = f"{urlparse(listing_url).scheme}://{urlparse(listing_url).netloc}"
     out: list[tuple[str, str, datetime | None]] = []
     seen: set[str] = set()
     for m in re.finditer(
-        r'data-tag="Press"[^>]*>\s*<a href="(/resources/[^"]+)"[^>]*>'
-        r".*?<span>(\d{2}\.\d{2}\.\d{4})</span>"
-        r".*?<h3[^>]*>([^<]+)</h3>",
+        r'class="resource-card"\s+data-category="Press"[^>]*>.*?'
+        r'<a\s+href="([^"]+)"\s+data-hover="card"',
         html,
         re.DOTALL | re.I,
     ):
-        path = m.group(1).split("?")[0]
-        url = urljoin(base, path)
+        href = m.group(1).strip()
+        if href.startswith("//"):
+            href = "https:" + href
+        elif href.startswith("/"):
+            href = urljoin(base, href)
+        url = href.split("#", 1)[0].split("?", 1)[0]
+        if not url.lower().startswith(("http://", "https://")):
+            continue
         if url in seen:
             continue
         seen.add(url)
-        dt = _parse_luminary_mmddyyyy(m.group(2))
-        title = re.sub(r"\s+", " ", m.group(3).strip())
-        out.append((url, title[:500], dt))
+        title = (
+            urlparse(url).path.rstrip("/").split("/")[-1]
+            or url
+        )
+        out.append((url, title[:500], None))
     return out
 
 
@@ -295,18 +308,19 @@ def _vinci_title_from_url(url: str) -> str:
 
 
 def parse_vinci_news_listing(html: str) -> list[tuple[str, str, None]]:
-    """WordPress news index: article URLs under ``/news/<slug>/``."""
+    """Newsroom/blog index: article URLs under ``/news/<slug>/`` or ``/blog/<slug>/``.
+
+    The article index moved from ``/news/`` to ``/blog/`` (``getvinci.ai/news`` now
+    301-redirects to ``getvinci.ai/blog``); accept both paths so stale links still parse.
+    """
     out: list[tuple[str, str, None]] = []
     seen: set[str] = set()
     for m in re.finditer(
-        r'href="(https://www\.getvinci\.ai/news/[^"?#]+)"',
+        r'href="(https://www\.getvinci\.ai/(?:news|blog)/([a-z0-9][a-z0-9_-]*)/)"',
         html,
         re.I,
     ):
-        raw = m.group(1).strip().rstrip("/")
-        if raw.endswith("/news"):
-            continue
-        url = raw + "/"
+        url = m.group(1).strip().rstrip("/") + "/"
         if url in seen:
             continue
         seen.add(url)
