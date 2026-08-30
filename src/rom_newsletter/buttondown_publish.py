@@ -163,7 +163,7 @@ def main(argv: list[str] | None = None) -> None:
     p.add_argument(
         "--no-dedupe",
         action="store_true",
-        help="Do not delete an earlier Buttondown email with the same week label before publishing",
+        help="Create a new email even if an email for this week already exists (do not update in place)",
     )
     p.add_argument(
         "--api-version",
@@ -192,13 +192,44 @@ def main(argv: list[str] | None = None) -> None:
     load_env()
     token = get_buttondown_api_key()
     api_ver = (args.api_version or os.environ.get("BUTTONDOWN_API_VERSION", "")).strip() or None
-    # Dedupe: our template renders "Week of <date>" at the top of the body. Before creating
-    # a new email for the same week, remove any earlier one so re-runs replace instead of
-    # stack. Skipped when the marker is missing from this HTML (e.g. an old template) to
-    # avoid deleting an unrelated week's email.
+    # Regeneration behavior: our template renders "Week of <date>" at the top of the body.
+    # If an email for this week already exists, update its subject+body in place (web
+    # archive only, no new email, no re-send to subscribers). Otherwise create a new email.
+    # Skipped when the marker is missing from this HTML (e.g. an old template) so we never
+    # accidentally match an unrelated week's email.
     marker = f"Week of {stamp}"
+    prior_id: str | None = None
     if not args.no_dedupe and marker in html:
-        _delete_emails_containing(token, marker)
+        prior_id = _find_email_containing(token, marker)
+    if prior_id is not None:
+        try:
+            out = _update_email(
+                token,
+                prior_id,
+                subject=subject,
+                body=build_buttondown_body(html),
+                api_version=api_ver,
+            )
+        except httpx.HTTPStatusError as e:
+            print(
+                f"Buttondown API error updating existing email {prior_id}: {e}",
+                file=sys.stderr,
+            )
+            if e.response is not None:
+                print(e.response.text[:4000], file=sys.stderr)
+            sys.exit(1)
+        except httpx.TimeoutException as e:
+            print(
+                f"Buttondown API timed out updating email {prior_id}: {e}. Retry later.",
+                file=sys.stderr,
+            )
+            sys.exit(1)
+        print(
+            f"Updated existing Buttondown email {prior_id} "
+            f"(week {stamp}); no new email sent."
+        )
+        print(f"Buttondown email {prior_id} status={out.get('status')}")
+        return
     try:
         out = publish_to_buttondown(
             html=html,
@@ -231,16 +262,15 @@ def main(argv: list[str] | None = None) -> None:
     print(f"Buttondown email {eid} status={st}")
 
 
-def _delete_emails_containing(token: str, marker: str) -> list[str]:
-    """Delete previously created emails whose body contains *marker* (e.g. the week label).
+def _find_email_containing(token: str, marker: str) -> str | None:
+    """Return the id of the existing Buttondown email whose body contains *marker*.
 
-    The list endpoint returns all emails in one response. Only exact body matches on the
-    week marker are removed, so a re-run of the same week replaces its earlier email instead
-    of stacking duplicates; other weeks' emails are untouched.
-    Returns the ids of deleted emails.
+    ``marker`` is the week label (e.g. "Week of 2026-08-23") rendered at the top of the
+    newsletter HTML body. If multiple emails match (should not happen), the most recent is
+    returned. Returns ``None`` when no prior email exists for that week.
     """
     headers = {"Authorization": f"Token {token}"}
-    deleted: list[str] = []
+    match: dict | None = None
     with httpx.Client(timeout=60.0, follow_redirects=True) as client:
         page_url: str | None = BUTTONDOWN_EMAILS_URL
         while page_url:
@@ -248,27 +278,47 @@ def _delete_emails_containing(token: str, marker: str) -> list[str]:
             r.raise_for_status()
             data = r.json()
             for email in data.get("results", []):
-                body = email.get("body") or ""
-                if marker not in body:
+                if marker not in (email.get("body") or ""):
                     continue
-                eid = email.get("id")
-                if not eid:
-                    continue
-                d = client.delete(f"{BUTTONDOWN_EMAILS_URL}/{eid}", headers=headers)
-                if d.status_code in (200, 204):
-                    deleted.append(eid)
-                    print(
-                        f"Removed prior duplicate email {eid} "
-                        f"(subject={email.get('subject', '')[:40]!r}, status={email.get('status')})",
-                        file=sys.stderr,
-                    )
-                else:
-                    print(
-                        f"Could not delete duplicate email {eid}: HTTP {d.status_code}",
-                        file=sys.stderr,
-                    )
+                if match is None or (email.get("creation_date") or "") >= (
+                    match.get("creation_date") or ""
+                ):
+                    match = email
             page_url = data.get("next") or None
-    return deleted
+    return match.get("id") if match else None
+
+
+def _update_email(
+    token: str,
+    email_id: str,
+    *,
+    subject: str,
+    body: str,
+    api_version: str | None = None,
+) -> dict:
+    """Update an existing Buttondown email's subject and body (web archive) without resending.
+
+    Updating a ``sent`` email only changes the archived copy; it does not push a new email
+    to subscribers. Returns the updated email object.
+    """
+    headers: dict[str, str] = {
+        "Authorization": f"Token {token}",
+        "Content-Type": "application/json",
+    }
+    if api_version:
+        headers["X-API-Version"] = api_version
+    payload = {
+        "subject": subject[:2000],
+        "body": body,
+    }
+    with httpx.Client(timeout=120.0) as client:
+        r = client.patch(
+            f"{BUTTONDOWN_EMAILS_URL}/{email_id}",
+            json=payload,
+            headers=headers,
+        )
+        r.raise_for_status()
+        return r.json()
 
 
 if __name__ == "__main__":

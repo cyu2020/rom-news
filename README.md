@@ -208,7 +208,7 @@ rom-newsletter-buttondown --output-dir dist --date 2026-03-20
 
 Use `**--draft**` to create a Buttondown **draft** instead of sending. `**--dry-run`** loads files and prints subject/body size only.
 
-By default the publish script deletes any **earlier** Buttondown email whose body carries the same `Week of <date>` label before creating the new one, so re-running (or re-dispatching) the same week **replaces** the prior email instead of stacking duplicates. Pass `**--no-dedupe`** to keep duplicates, or when publishing a template that lacks the week label (dedupe is skipped automatically if the label isn't in the HTML).
+By default the publish script **updates in place**: if an email for the week already exists (matched by the `Week of <date>` label rendered in the HTML body), it PATCHes that email's subject and body so the web archive reflects the regenerated issue — it does **not** create a new email and does **not** re-send to subscribers. Only when no prior email exists does it create one. Pass `**--no-dedupe`** to always create a new email, or when publishing a template that lacks the week label (in-place update is skipped automatically if the label isn't in the HTML).
 
 Optional env `**BUTTONDOWN_API_VERSION**` (e.g. `2026-04-01`) is passed as `X-API-Version` if you pin API behavior; see [Buttondown API versioning](https://docs.buttondown.com/api-versioning).
 
