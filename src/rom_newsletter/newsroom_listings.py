@@ -310,8 +310,9 @@ def _vinci_title_from_url(url: str) -> str:
 def parse_vinci_news_listing(html: str) -> list[tuple[str, str, None]]:
     """Newsroom/blog index: article URLs under ``/news/<slug>/`` or ``/blog/<slug>/``.
 
-    The article index moved from ``/news/`` to ``/blog/`` (``getvinci.ai/news`` now
-    301-redirects to ``getvinci.ai/blog``); accept both paths so stale links still parse.
+    Deprecated: superseded by the WordPress REST API parser (``parse_vinci_wp_posts``) because
+    getvinci.ai serves Cloudflare challenges/403s to some robot IPs (e.g. GitHub Actions).
+    Kept as a lightweight fallback for pages that still render article links.
     """
     out: list[tuple[str, str, None]] = []
     seen: set[str] = set()
@@ -325,6 +326,74 @@ def parse_vinci_news_listing(html: str) -> list[tuple[str, str, None]]:
             continue
         seen.add(url)
         out.append((url, _vinci_title_from_url(url), None))
+    return out
+
+
+VINCI_WP_POSTS_URL = "https://www.getvinci.ai/wp-json/wp/v2/posts"
+
+
+def _fetch_vinci_wp_posts(timeout: float) -> list[dict]:
+    """Fetch every getvinci.ai post via the WordPress REST API (paged 100/request).
+
+    Mirrors ``_fetch_akselos_wp_posts``. The JSON API is not served behind Cloudflare's
+    challenge/403 wall that blocks robot IPs on the HTML pages (e.g. GitHub Actions).
+    """
+    posts: list[dict] = []
+    page = 1
+    with httpx.Client(
+        timeout=timeout, headers={"User-Agent": _UA}, follow_redirects=True
+    ) as c:
+        while True:
+            r = c.get(
+                VINCI_WP_POSTS_URL,
+                params={"per_page": 100, "page": page, "_fields": "link,date,title"},
+            )
+            r.raise_for_status()
+            posts.extend(r.json())
+            total_pages = int(r.headers.get("x-wp-totalpages", "1") or "1")
+            if page >= total_pages:
+                break
+            page += 1
+    return posts
+
+
+def parse_vinci_wp_posts(posts: list[dict]) -> list[tuple[str, str, datetime | None]]:
+    """Parse getvinci.ai posts (Blog/News) with publish dates and rendered titles.
+
+    Only on-site ``getvinci.ai/blog/...`` links are kept; the WordPress API exposes real
+    publish ``date`` (UTC-converted), so no per-article fetch is needed.
+    """
+    out: list[tuple[str, str, datetime | None]] = []
+    seen: set[str] = set()
+    for p in posts:
+        link = (p.get("link") or "").strip()
+        try:
+            h = (urlparse(link).netloc or "").lower()
+        except ValueError:
+            continue
+        if h.removeprefix("www.") != "getvinci.ai":
+            continue
+        url = link.split("#", 1)[0].split("?", 1)[0]
+        if url in seen:
+            continue
+        seen.add(url)
+        raw = p.get("title") or {}
+        if isinstance(raw, dict):
+            title = re.sub(r"<[^>]+>", "", raw.get("rendered", "") or "")
+        else:
+            title = str(raw)
+        title = re.sub(r"\s+", " ", title).strip()[:500] or url
+        dt: datetime | None = None
+        d = p.get("date")
+        if d:
+            try:
+                dt = datetime.fromisoformat(d.replace("Z", "+00:00"))
+                if dt.tzinfo is None:
+                    dt = dt.replace(tzinfo=timezone.utc)
+                dt = dt.astimezone(timezone.utc)
+            except ValueError:
+                dt = None
+        out.append((url, title, dt))
     return out
 
 
@@ -459,6 +528,8 @@ def fetch_newsroom_hits(
                 fetched = _fetch_html(SIEMENS_NEWS_SITEMAP_URL, timeout)
             elif pid == "akselos":
                 fetched = _fetch_akselos_wp_posts(timeout)
+            elif pid == "vinci":
+                fetched = _fetch_vinci_wp_posts(timeout)
             else:
                 fetched = _fetch_html(s.url, timeout)
         except (httpx.HTTPError, OSError) as e:
@@ -470,6 +541,8 @@ def fetch_newsroom_hits(
                         if pid == "siemens"
                         else AKSELOS_WP_POSTS_URL
                         if pid == "akselos"
+                        else VINCI_WP_POSTS_URL
+                        if pid == "vinci"
                         else s.url
                     ),
                     "error": str(e),
@@ -488,7 +561,7 @@ def fetch_newsroom_hits(
         elif pid == "luminary":
             candidates = parse_luminary_press_resources(fetched, s.url)
         elif pid == "vinci":
-            candidates = parse_vinci_news_listing(fetched)
+            candidates = parse_vinci_wp_posts(fetched)
         elif pid == "akselos":
             candidates = parse_akselos_wp_posts(fetched)
         else:

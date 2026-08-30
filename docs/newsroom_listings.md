@@ -14,7 +14,7 @@ The `id` field on a source row selects a parser. The internal map is `_parser_fo
 | `siemens` | `parse_siemens_news_sitemap` | Fetches fixed `news.siemens.com` en-us sitemap (not `url` body) |
 | `p1-ai` | `parse_p1_ai_homepage` | Press links from `p-1.ai` homepage |
 | `luminary` | `parse_luminary_press_resources` | Press cards on `luminary.ai/resources` |
-| `vinci4d` | `parse_vinci_news_listing` | `getvinci.ai/blog` (redirects from `getvinci.ai/news`) |
+| `vinci4d` | `parse_vinci_wp_posts` | WordPress REST API (`/wp-json/wp/v2/posts`) — Blog/News posts with publish dates; mirrors `akselos`. HTML listing (`getvinci.ai/news`→`/blog`) is behind Cloudflare challenges/403 from some robot IPs, so the API is used instead |
 | `akselos` | `parse_akselos_wp_posts` | WordPress REST API (`/wp-json/wp/v2/posts`) — complete Blogs+In-the-news list with publish dates, not the category-filtered listing page |
 
 Unknown or missing `id` with `newsroom_listing: true` produces an error entry in the newsroom metadata (see `fetch_newsroom_hits`).
