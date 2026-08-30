@@ -328,50 +328,85 @@ def parse_vinci_news_listing(html: str) -> list[tuple[str, str, None]]:
     return out
 
 
-# Single-path posts on akselos.com news/resources listing (exclude site chrome).
-_AKSELOS_SINGLE_SEGMENT_SKIP = frozenset(
-    {
-        "contact-us",
-        "feed",
-        "privacy",
-        "resources",
-        "software-release-notes",
-        "spm",
-        "wind-power",
-        "our-commitment-to-cybersecurity",
-        "wp-json",
-        "xmlrpc.php",
-    }
-)
+# Akselos WordPress REST API: complete post list (Blogs + In the news) with publish dates.
+# The visible resources/news listing pages only surface a subset (category/sort dependent) and
+# posts that move between categories (e.g. to blog) disappear from the scraped page.
+AKSELOS_WP_POSTS_URL = "https://akselos.com/wp-json/wp/v2/posts"
+_AKSELOS_WP_FIELDS = "link,date,title"
+_AKSELOS_WP_PER_PAGE = 100
 
 
-def parse_akselos_resources_news(html: str, listing_url: str) -> list[tuple[str, str, None]]:
-    """Resource hub with News filter: article URLs as ``/slug/`` (single segment), not white papers."""
-    out: list[tuple[str, str, None]] = []
+def _is_akselos_url(link: str) -> bool:
+    try:
+        h = (urlparse(link).netloc or "").lower()
+    except ValueError:
+        return False
+    return h in ("akselos.com", "www.akselos.com")
+
+
+def _fetch_akselos_wp_posts(timeout: float) -> list[dict]:
+    """Fetch every akselos.com post via the WP REST API (paged 100/request).
+
+    Follows ``X-WP-TotalPages`` so all posts are collected regardless of category or sort order.
+    Raises ``httpx.HTTPError`` / ``OSError`` on failure (handled by the caller).
+    """
+    posts: list[dict] = []
+    page = 1
+    with httpx.Client(
+        timeout=timeout, headers={"User-Agent": _UA}, follow_redirects=True
+    ) as c:
+        while True:
+            r = c.get(
+                AKSELOS_WP_POSTS_URL,
+                params={
+                    "per_page": _AKSELOS_WP_PER_PAGE,
+                    "page": page,
+                    "_fields": _AKSELOS_WP_FIELDS,
+                },
+            )
+            r.raise_for_status()
+            posts.extend(r.json())
+            total_pages = int(r.headers.get("x-wp-totalpages", "1") or "1")
+            if page >= total_pages:
+                break
+            page += 1
+    return posts
+
+
+def parse_akselos_wp_posts(posts: list[dict]) -> list[tuple[str, str, datetime | None]]:
+    """Parse akselos.com WordPress posts (Blogs + In the news) with publish dates.
+
+    Titles come from ``title.rendered`` (HTML stripped). Only on-site akselos.com links are
+    kept (external press pickups/syndications are not newsroom items). The post ``date`` is
+    real publish time in UTC, so no per-article fetch is needed.
+    """
+    out: list[tuple[str, str, datetime | None]] = []
     seen: set[str] = set()
-    for m in re.finditer(r'href="(https?://(?:www\.)?akselos\.com/[^"?#]+)', html, re.I):
-        raw = m.group(1).strip().rstrip("/")
-        try:
-            p = urlparse(raw)
-        except ValueError:
+    for p in posts:
+        link = (p.get("link") or "").strip()
+        if not _is_akselos_url(link):
             continue
-        h = (p.netloc or "").lower()
-        if h.removeprefix("www.") != "akselos.com":
-            continue
-        parts = [x for x in p.path.strip("/").split("/") if x]
-        if len(parts) != 1:
-            continue
-        seg = parts[0].lower()
-        if seg in _AKSELOS_SINGLE_SEGMENT_SKIP:
-            continue
-        if seg.endswith((".php", ".xml")):
-            continue
-        url = urljoin(f"https://akselos.com/", parts[0] + "/")
+        url = link.split("#", 1)[0].split("?", 1)[0]
         if url in seen:
             continue
         seen.add(url)
-        title = parts[0].replace("-", " ").replace("_", " ").strip().title()[:500]
-        out.append((url, title, None))
+        raw = p.get("title") or {}
+        if isinstance(raw, dict):
+            title = re.sub(r"<[^>]+>", "", raw.get("rendered", "") or "")
+        else:
+            title = str(raw)
+        title = re.sub(r"\s+", " ", title).strip()[:500] or url
+        dt: datetime | None = None
+        d = p.get("date")
+        if d:
+            try:
+                dt = datetime.fromisoformat(d.replace("Z", "+00:00"))
+                if dt.tzinfo is None:
+                    dt = dt.replace(tzinfo=timezone.utc)
+                dt = dt.astimezone(timezone.utc)
+            except ValueError:
+                dt = None
+        out.append((url, title, dt))
     return out
 
 
@@ -421,35 +456,43 @@ def fetch_newsroom_hits(
         key = s.id or s.label
         try:
             if pid == "siemens":
-                html = _fetch_html(SIEMENS_NEWS_SITEMAP_URL, timeout)
+                fetched = _fetch_html(SIEMENS_NEWS_SITEMAP_URL, timeout)
+            elif pid == "akselos":
+                fetched = _fetch_akselos_wp_posts(timeout)
             else:
-                html = _fetch_html(s.url, timeout)
+                fetched = _fetch_html(s.url, timeout)
         except (httpx.HTTPError, OSError) as e:
             errors.append(
                 {
                     "id": key,
-                    "url": SIEMENS_NEWS_SITEMAP_URL if pid == "siemens" else s.url,
+                    "url": (
+                        SIEMENS_NEWS_SITEMAP_URL
+                        if pid == "siemens"
+                        else AKSELOS_WP_POSTS_URL
+                        if pid == "akselos"
+                        else s.url
+                    ),
                     "error": str(e),
                 }
             )
             continue
 
         if pid == "physicsx":
-            candidates = parse_physicsx_newsroom(html, s.url)
+            candidates = parse_physicsx_newsroom(fetched, s.url)
         elif pid == "neural_concept":
-            candidates = parse_neural_concept_press(html)
+            candidates = parse_neural_concept_press(fetched)
         elif pid == "siemens":
-            candidates = parse_siemens_news_sitemap(html)
+            candidates = parse_siemens_news_sitemap(fetched)
         elif pid == "p1_ai":
-            candidates = parse_p1_ai_homepage(html)
+            candidates = parse_p1_ai_homepage(fetched)
         elif pid == "luminary":
-            candidates = parse_luminary_press_resources(html, s.url)
+            candidates = parse_luminary_press_resources(fetched, s.url)
         elif pid == "vinci":
-            candidates = parse_vinci_news_listing(html)
+            candidates = parse_vinci_news_listing(fetched)
         elif pid == "akselos":
-            candidates = parse_akselos_resources_news(html, s.url)
+            candidates = parse_akselos_wp_posts(fetched)
         else:
-            candidates = parse_emmi_news(html)
+            candidates = parse_emmi_news(fetched)
 
         kw = f"newsroom:{pid}"
         n_raw = len(candidates)

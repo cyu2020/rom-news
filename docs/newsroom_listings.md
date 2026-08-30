@@ -15,7 +15,7 @@ The `id` field on a source row selects a parser. The internal map is `_parser_fo
 | `p1-ai` | `parse_p1_ai_homepage` | Press links from `p-1.ai` homepage |
 | `luminary` | `parse_luminary_press_resources` | Press cards on `luminary.ai/resources` |
 | `vinci4d` | `parse_vinci_news_listing` | `getvinci.ai/blog` (redirects from `getvinci.ai/news`) |
-| `akselos` | `parse_akselos_resources_news` | News-filter resource hub |
+| `akselos` | `parse_akselos_wp_posts` | WordPress REST API (`/wp-json/wp/v2/posts`) — complete Blogs+In-the-news list with publish dates, not the category-filtered listing page |
 
 Unknown or missing `id` with `newsroom_listing: true` produces an error entry in the newsroom metadata (see `fetch_newsroom_hits`).
 
