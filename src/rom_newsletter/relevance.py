@@ -29,6 +29,7 @@ _WEIGHTED: list[tuple[re.Pattern[str], int]] = [
     (re.compile(r"simcenter|twin\s+builder|omniverse|modulus", re.I), 2),
     (re.compile(r"predictive\s+simulation|simulation\s+software", re.I), 2),
     (re.compile(r"physics\s+ml|physics[-\s]based\s+ml", re.I), 2),
+    (re.compile(r"continuous\s+physics|physics\s+intelligence|physics\s+as\s+infrastructure", re.I), 2),
     (re.compile(r"surrogate|emulator", re.I), 2),
     (re.compile(r"calibration|parameter\s+inference", re.I), 1),
     # Digital engineering (1) — broad; used with min_score >= 2 typically

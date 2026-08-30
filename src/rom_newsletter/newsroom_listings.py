@@ -397,6 +397,38 @@ def parse_vinci_wp_posts(posts: list[dict]) -> list[tuple[str, str, datetime | N
     return out
 
 
+VINCI_NEWSROOM_URL = "https://www.getvinci.ai/newsroom/"
+
+
+def _vinci_newsroom_links(html: str) -> list[tuple[str, str, datetime | None]]:
+    """Extract press-release links (``/news/<slug>/``) from the ``/newsroom/`` index.
+
+    The WP REST API only exposes the 17 ``/blog/`` posts; the ``/news/`` press releases are
+    a separate content type and only appear on this listing page. Titles are slug-derived
+    here (the listing card does not render a title), dates come from downstream article
+    page fetches.
+    """
+    out: list[tuple[str, str, datetime | None]] = []
+    seen: set[str] = set()
+    for m in re.finditer(
+        r'href="(https://www\.getvinci\.ai/news/[^"?#]+)"',
+        html,
+        re.I,
+    ):
+        url = m.group(1).strip().rstrip("/") + "/"
+        if url in seen:
+            continue
+        seen.add(url)
+        out.append((url, _vinci_title_from_url(url), None))
+    return out
+
+
+def _fetch_vinci_newsroom_links(timeout: float) -> list[tuple[str, str, datetime | None]]:
+    """Fetch ``/newsroom/`` and extract press-release candidate links."""
+    html = _fetch_html(VINCI_NEWSROOM_URL, timeout)
+    return _vinci_newsroom_links(html)
+
+
 # Akselos WordPress REST API: complete post list (Blogs + In the news) with publish dates.
 # The visible resources/news listing pages only surface a subset (category/sort dependent) and
 # posts that move between categories (e.g. to blog) disappear from the scraped page.
@@ -529,7 +561,12 @@ def fetch_newsroom_hits(
             elif pid == "akselos":
                 fetched = _fetch_akselos_wp_posts(timeout)
             elif pid == "vinci":
-                fetched = _fetch_vinci_wp_posts(timeout)
+                # Two content types: WP API (blog posts, dated/titled) + /newsroom/ listing
+                # (press releases; not in the API, so scrape the index for article URLs).
+                fetched = {
+                    "wp": _fetch_vinci_wp_posts(timeout),
+                    "newsroom": _fetch_vinci_newsroom_links(timeout),
+                }
             else:
                 fetched = _fetch_html(s.url, timeout)
         except (httpx.HTTPError, OSError) as e:
@@ -561,11 +598,16 @@ def fetch_newsroom_hits(
         elif pid == "luminary":
             candidates = parse_luminary_press_resources(fetched, s.url)
         elif pid == "vinci":
-            candidates = parse_vinci_wp_posts(fetched)
-        elif pid == "akselos":
-            candidates = parse_akselos_wp_posts(fetched)
-        else:
-            candidates = parse_emmi_news(fetched)
+            wp = parse_vinci_wp_posts(fetched["wp"])
+            nr = fetched["newsroom"]
+            # Merge; WP API wins on title/date for blog posts, newsroom adds press URLs.
+            by_url: dict[str, tuple[str, str, datetime | None]] = {}
+            for u, t, d in wp:
+                by_url.setdefault(u, (u, t, d))
+            for u, t, d in nr:
+                if u not in by_url:
+                    by_url[u] = (u, t, d)
+            candidates = list(by_url.values())
 
         kw = f"newsroom:{pid}"
         n_raw = len(candidates)

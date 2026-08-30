@@ -89,6 +89,10 @@
         "weight": 2
       },
       {
+        "pattern": "continuous\\s+physics|physics\\s+intelligence|physics\\s+as\\s+infrastructure",
+        "weight": 2
+      },
+      {
         "pattern": "surrogate|emulator",
         "weight": 2
       },

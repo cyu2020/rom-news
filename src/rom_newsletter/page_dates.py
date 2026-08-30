@@ -38,9 +38,11 @@ _PATTERNS: list[re.Pattern[str]] = [
         r'<meta[^>]+(?:property|name)=["\']og:updated_time["\'][^>]+content=["\']([^"\']+)["\']',
         re.I,
     ),
-    re.compile(r'<time[^>]+datetime=["\']([^"\']+)["\']', re.I),
     re.compile(r'"datePublished"\s*:\s*"([^"]+)"', re.I),
     re.compile(r'"dateModified"\s*:\s*"([^"]+)"', re.I),
+    re.compile(
+        r'<time[^>]+datetime=["\']([^"\']+)["\']', re.I
+    ),
 ]
 
 # Visible English dates (Webflow / newsrooms): "March 17, 2026" or "17 March 2026"
@@ -144,9 +146,21 @@ def _datetime_from_json_ld(html: str) -> datetime | None:
             return dt
     return None
 
+# <time datetime> elements inside sidebar/related-news cards carry a *different* article's
+# date (e.g. "news-card__meta") and appear before the page's own datePublished in DOM order.
+# datePublished/dateModified JSON-LD is authoritative and checked first (see below); when
+# falling back to <time>, ignore tags nested in those card/related containers.
+_TIME_CARD_CONTAINERS = re.compile(r"news-card__meta|related|sidebar|more-news|card__meta", re.I)
+
 
 def extract_published_datetime(html: str) -> datetime | None:
-    """Best-effort published time from raw HTML (structured meta → JSON-LD → visible English dates)."""
+    """Best-effort published time from raw HTML.
+
+    Priority: structured meta tags → JSON-LD ``datePublished``/``dateModified`` → ``<time>``
+    (skipping sidebar/related-news card containers) → visible English dates.
+    JSON-LD is authoritative and is checked before generic ``<time>`` tags so sidebar cards
+    that embed other articles' dates cannot shadow the real publish time.
+    """
     chunk = html if len(html) <= _MAX_HTML_BYTES else html[:_MAX_HTML_BYTES]
     for pat in _PATTERNS:
         m = pat.search(chunk)
@@ -157,6 +171,14 @@ def extract_published_datetime(html: str) -> datetime | None:
     dt = _datetime_from_json_ld(chunk)
     if dt is not None:
         return dt
+    # <time datetime> fallback, skipping sidebar/related-news card containers
+    for m in re.finditer(r'<time[^>]+datetime=["\']([^"\']+)["\']', chunk, re.I):
+        before = chunk[max(0, m.start() - 400): m.start()]
+        if _TIME_CARD_CONTAINERS.search(before):
+            continue
+        dt = _parse_datetime_string_impl(m.group(1))
+        if dt is not None:
+            return dt
     # Webflow / CMS: date in body text; strip comments so we do not match "Last Published" in <!-- ... -->
     visible = _strip_html_comments(chunk)
     return _datetime_from_english_matches(visible)
