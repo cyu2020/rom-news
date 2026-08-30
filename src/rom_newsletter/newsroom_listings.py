@@ -330,6 +330,35 @@ def parse_vinci_news_listing(html: str) -> list[tuple[str, str, None]]:
 
 
 VINCI_WP_POSTS_URL = "https://www.getvinci.ai/wp-json/wp/v2/posts"
+VINCI_WP_NEWS_URL = "https://www.getvinci.ai/wp-json/wp/v2/news"
+
+
+def _fetch_vinci_wp_news(timeout: float) -> list[dict]:
+    """Fetch every getvinci.ai press-release post via the WordPress REST API.
+
+    Press releases are a separate content type exposed at ``/wp-json/wp/v2/news`` (the
+    ``/news/`` paths), *not* under ``/posts`` (which only has the 17 blog posts). The JSON
+    API is not behind the Cloudflare challenge/403 wall that blocks robot IPs on HTML
+    pages (e.g. GitHub Actions), so this is the CI-safe replacement for scraping
+    ``/newsroom/``.
+    """
+    posts: list[dict] = []
+    page = 1
+    with httpx.Client(
+        timeout=timeout, headers={"User-Agent": _UA}, follow_redirects=True
+    ) as c:
+        while True:
+            r = c.get(
+                VINCI_WP_NEWS_URL,
+                params={"per_page": 100, "page": page, "_fields": "link,date,title"},
+            )
+            r.raise_for_status()
+            posts.extend(r.json())
+            total_pages = int(r.headers.get("x-wp-totalpages", "1") or "1")
+            if page >= total_pages:
+                break
+            page += 1
+    return posts
 
 
 def _fetch_vinci_wp_posts(timeout: float) -> list[dict]:
@@ -397,36 +426,7 @@ def parse_vinci_wp_posts(posts: list[dict]) -> list[tuple[str, str, datetime | N
     return out
 
 
-VINCI_NEWSROOM_URL = "https://www.getvinci.ai/newsroom/"
 
-
-def _vinci_newsroom_links(html: str) -> list[tuple[str, str, datetime | None]]:
-    """Extract press-release links (``/news/<slug>/``) from the ``/newsroom/`` index.
-
-    The WP REST API only exposes the 17 ``/blog/`` posts; the ``/news/`` press releases are
-    a separate content type and only appear on this listing page. Titles are slug-derived
-    here (the listing card does not render a title), dates come from downstream article
-    page fetches.
-    """
-    out: list[tuple[str, str, datetime | None]] = []
-    seen: set[str] = set()
-    for m in re.finditer(
-        r'href="(https://www\.getvinci\.ai/news/[^"?#]+)"',
-        html,
-        re.I,
-    ):
-        url = m.group(1).strip().rstrip("/") + "/"
-        if url in seen:
-            continue
-        seen.add(url)
-        out.append((url, _vinci_title_from_url(url), None))
-    return out
-
-
-def _fetch_vinci_newsroom_links(timeout: float) -> list[tuple[str, str, datetime | None]]:
-    """Fetch ``/newsroom/`` and extract press-release candidate links."""
-    html = _fetch_html(VINCI_NEWSROOM_URL, timeout)
-    return _vinci_newsroom_links(html)
 
 
 # Akselos WordPress REST API: complete post list (Blogs + In the news) with publish dates.
@@ -561,12 +561,18 @@ def fetch_newsroom_hits(
             elif pid == "akselos":
                 fetched = _fetch_akselos_wp_posts(timeout)
             elif pid == "vinci":
-                # Two content types: WP API (blog posts, dated/titled) + /newsroom/ listing
-                # (press releases; not in the API, so scrape the index for article URLs).
-                fetched = {
-                    "wp": _fetch_vinci_wp_posts(timeout),
-                    "newsroom": _fetch_vinci_newsroom_links(timeout),
-                }
+                # Two content types: WP API posts (blog, dated/titled) + WP API news
+                # (press releases under /news/; exposed at /wp-json/wp/v2/news, not /posts).
+                # Both are JSON API, so no HTML scrape and no Cloudflare wall.
+                fetched = {"wp": [], "news": [], "wp_error": None, "news_error": None}
+                try:
+                    fetched["wp"] = _fetch_vinci_wp_posts(timeout)
+                except (httpx.HTTPError, OSError) as e:
+                    fetched["wp_error"] = str(e)
+                try:
+                    fetched["news"] = _fetch_vinci_wp_news(timeout)
+                except (httpx.HTTPError, OSError) as e:
+                    fetched["news_error"] = str(e)
             else:
                 fetched = _fetch_html(s.url, timeout)
         except (httpx.HTTPError, OSError) as e:
@@ -599,8 +605,8 @@ def fetch_newsroom_hits(
             candidates = parse_luminary_press_resources(fetched, s.url)
         elif pid == "vinci":
             wp = parse_vinci_wp_posts(fetched["wp"])
-            nr = fetched["newsroom"]
-            # Merge; WP API wins on title/date for blog posts, newsroom adds press URLs.
+            nr = parse_vinci_wp_posts(fetched["news"])
+            # Merge; both content types share the same on-site/link/date/title format.
             by_url: dict[str, tuple[str, str, datetime | None]] = {}
             for u, t, d in wp:
                 by_url.setdefault(u, (u, t, d))
@@ -608,6 +614,24 @@ def fetch_newsroom_hits(
                 if u not in by_url:
                     by_url[u] = (u, t, d)
             candidates = list(by_url.values())
+            if fetched.get("news_error"):
+                errors.append(
+                    {
+                        "id": key,
+                        "url": VINCI_WP_NEWS_URL,
+                        "error": str(fetched["news_error"])
+                        + " (continuing with WP blog posts only)",
+                    }
+                )
+            if fetched.get("wp_error"):
+                errors.append(
+                    {
+                        "id": key,
+                        "url": VINCI_WP_POSTS_URL,
+                        "error": str(fetched["wp_error"])
+                        + " (continuing with WP news posts only)",
+                    }
+                )
 
         kw = f"newsroom:{pid}"
         n_raw = len(candidates)
