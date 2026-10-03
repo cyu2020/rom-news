@@ -25,6 +25,26 @@ jobs:
           LLM_MODEL: ${{ secrets.LLM_MODEL }}
           ROM_NEWSLETTER_ARXIV_USER_AGENT: ${{ vars.ROM_NEWSLETTER_ARXIV_USER_AGENT }}
         run: uv run --frozen rom-newsletter --date 2026-09-20 --refine --no-skip-seen --output-dir dist
+      - name: Require restored Akselos industry article
+        run: |
+          uv run --frozen python - <<'PY'
+          import json
+          from pathlib import Path
+          from rom_newsletter.search import _canonical_url
+          root = Path("dist")
+          required = "https://akselos.com/industrial-ai"
+          audit = json.loads((root / "newsletter-2026-09-20-search.json").read_text())
+          draft = json.loads((root / "newsletter-2026-09-20.json").read_text())
+          inputs = [h for h in audit["composition_inputs"] if _canonical_url(h["url"]) == required]
+          assert inputs and "finite element" in inputs[0]["content"].lower(), "Missing Akselos technical excerpt"
+          industry_urls = {
+              _canonical_url(link["url"])
+              for subsection in draft["industry_news"]["subsections"]
+              for link in subsection["links"]
+          }
+          assert required in industry_urls, "Akselos must appear in Industry News before any archive update"
+          print("Verified Akselos article in Industry News; relevance threshold remains 2.")
+          PY
       - name: Validate regenerated archive files
         run: uv run --frozen rom-newsletter-buttondown --date 2026-09-20 --output-dir dist --dry-run
       - name: Update existing sent issue archive only
