@@ -1,9 +1,10 @@
 from __future__ import annotations
 
 import json
+import re
 from dataclasses import dataclass
 from typing import Any
-from urllib.parse import urlparse, urlunparse
+from urllib.parse import parse_qsl, urlencode, urlparse, urlunparse
 
 from rom_newsletter.sources import CATEGORY_INDUSTRY, CATEGORY_PAPERS
 
@@ -21,12 +22,7 @@ class SearchHit:
 
     def to_prompt_block(self) -> str:
         score = f" (score={self.raw_score})" if self.raw_score is not None else ""
-        return (
-            f"URL: {self.url}\n"
-            f"Title: {self.title}\n"
-            f"From-query: {self.keyword}{score}\n"
-            f"Excerpt: {self.content}\n"
-        )
+        return f"URL: {self.url}\nTitle: {self.title}\nFrom-query: {self.keyword}{score}\nExcerpt: {self.content}\n"
 
 
 def _canonical_url(url: str) -> str:
@@ -36,10 +32,21 @@ def _canonical_url(url: str) -> str:
         return url.strip()
     if not p.netloc:
         return url.strip()
+    if p.hostname in ("arxiv.org", "www.arxiv.org", "export.arxiv.org"):
+        match = re.fullmatch(r"/(?:abs|pdf)/(.+?)(?:v\d+)?(?:\.pdf)?", p.path)
+        if match:
+            return f"https://arxiv.org/abs/{match.group(1)}"
     path = p.path or "/"
     if path != "/" and path.endswith("/"):
         path = path.rstrip("/")
-    return urlunparse((p.scheme, p.netloc.lower(), path, "", p.query, ""))
+    query = urlencode(
+        sorted(
+            (k, v)
+            for k, v in parse_qsl(p.query, keep_blank_values=True)
+            if not k.lower().startswith("utm_") and k.lower() not in {"fbclid", "gclid"}
+        )
+    )
+    return urlunparse((p.scheme.lower(), p.netloc.lower(), path, "", query, ""))
 
 
 def merge_hits_ordered(*groups: list[SearchHit]) -> list[SearchHit]:
@@ -81,6 +88,16 @@ def filter_unseen(hits: list[SearchHit], seen_urls: set[str]) -> tuple[list[Sear
 def hits_to_bundle_text(hits: list[SearchHit]) -> str:
     parts = [h.to_prompt_block() for h in hits]
     return "\n---\n".join(parts) if parts else "(no search results; do not invent items)"
+
+
+def budget_hits(hits: list[SearchHit], excerpt_chars: int, max_chars: int) -> tuple[list[SearchHit], dict]:
+    """Fit already-ranked stories into a character budget, preserving citations and titles."""
+    kept: list[SearchHit] = []
+    for h in hits:
+        candidate = SearchHit(**{**vars(h), "content": h.content[:excerpt_chars]})
+        if len(hits_to_bundle_text(kept + [candidate])) <= max_chars:
+            kept.append(candidate)
+    return kept, {"input": len(hits), "kept": len(kept), "chars": len(hits_to_bundle_text(kept)), "limit": max_chars}
 
 
 def split_hits_by_source_category(

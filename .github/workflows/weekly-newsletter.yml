@@ -1,73 +1,82 @@
-# Weekly: generate newsletter (no seen-url skip) and publish HTML to Buttondown.
-# Cron is UTC — adjust if you want a specific local Monday.
-
 name: Weekly newsletter
 
 on:
   schedule:
-    - cron: "0 14 * * 1" # Monday 14:00 UTC
+    - cron: "0 14 * * 1" # Monday 14:00 UTC; week ends the preceding Sunday.
   workflow_dispatch:
     inputs:
       week_end_date:
-        description: "ISO date YYYY-MM-DD (rom-newsletter --date); default last Sunday UTC"
+        description: "Week ending YYYY-MM-DD; defaults to last Sunday UTC"
         required: false
         type: string
 
 permissions:
   contents: read
 
+# Serialize all issues: publication state and the URL ledger are shared.
+concurrency:
+  group: rom-newsletter-publication
+  cancel-in-progress: false
+
 env:
-  # Use Node 24 for JS-based actions (avoids Node 20 deprecation warnings on the runner).
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 
 jobs:
   publish:
     runs-on: ubuntu-latest
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v5
-
       - uses: astral-sh/setup-uv@v5
-        with:
-          version: "latest"
-
       - uses: actions/setup-python@v6
         with:
           python-version: "3.13"
-
+      - name: Restore publication state
+        uses: actions/cache/restore@v4
+        with:
+          path: .rom-newsletter
+          key: rom-newsletter-state-v1-${{ github.run_id }}-${{ github.run_attempt }}
+          restore-keys: rom-newsletter-state-v1-
       - name: Set week end date
+        env:
+          REQUESTED_DATE: ${{ inputs.week_end_date }}
         run: |
-          if [ "${{ github.event_name }}" = "workflow_dispatch" ] && [ -n "${{ github.event.inputs.week_end_date }}" ]; then
-            W="${{ github.event.inputs.week_end_date }}"
+          if [ -n "$REQUESTED_DATE" ]; then
+            W="$REQUESTED_DATE"
           else
             W=$(date -u -d 'last Sunday' +%F)
           fi
+          python -c 'import datetime,sys; datetime.date.fromisoformat(sys.argv[1])' "$W"
           echo "WEEK_END=$W" >> "$GITHUB_ENV"
-          echo "Using WEEK_END=$W"
-
-      - name: Install package
-        run: |
-          uv venv -p 3.13
-          uv pip install --python .venv/bin/python -e .
-
+      - name: Install locked dependencies
+        run: uv sync --frozen --extra dev
+      - name: Regression checks
+        run: uv run --frozen pytest -q
       - name: Generate newsletter
         env:
           LLM_BASE_URL: ${{ secrets.LLM_BASE_URL }}
           LLM_API_KEY: ${{ secrets.LLM_API_KEY }}
           LLM_MODEL: ${{ secrets.LLM_MODEL }}
-          # Optional repo variable: unique User-Agent reduces arXiv 429 rate limits from shared CI IPs.
           ROM_NEWSLETTER_ARXIV_USER_AGENT: ${{ vars.ROM_NEWSLETTER_ARXIV_USER_AGENT }}
-        run: |
-          .venv/bin/rom-newsletter --date "$WEEK_END" --no-skip-seen --theme-min-score 0 --output-dir dist
-
+        run: uv run --frozen rom-newsletter --date "$WEEK_END" --refine --output-dir dist
+      - name: Validate publication files
+        run: uv run --frozen rom-newsletter-buttondown --output-dir dist --date "$WEEK_END" --dry-run
       - name: Publish to Buttondown
         env:
           BUTTONDOWN_API_KEY: ${{ secrets.BUTTONDOWN_API_KEY }}
-        run: |
-          .venv/bin/rom-newsletter-buttondown --output-dir dist --date "$WEEK_END"
-
+        run: uv run --frozen rom-newsletter-buttondown --output-dir dist --date "$WEEK_END"
+      - name: Save publication state (including uncertain outcomes)
+        if: always()
+        uses: actions/cache/save@v4
+        with:
+          path: .rom-newsletter
+          key: rom-newsletter-state-v1-${{ github.run_id }}-${{ github.run_attempt }}
       - uses: actions/upload-artifact@v6
         if: always()
         with:
           name: newsletter-${{ env.WEEK_END }}
-          path: dist/
+          path: |
+            dist/
+            .rom-newsletter/*.json
+          include-hidden-files: true
           if-no-files-found: ignore

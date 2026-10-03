@@ -4,7 +4,7 @@ import html
 from pathlib import Path
 from typing import Any
 
-from jinja2 import Environment, FileSystemLoader, select_autoescape
+from jinja2 import Environment, FileSystemLoader
 
 from rom_newsletter.compose import MajorSection, NewsletterDraft, Subsection
 
@@ -46,7 +46,7 @@ def render_html(
     base = template_dir or (Path(__file__).resolve().parent.parent.parent / "templates")
     env = Environment(
         loader=FileSystemLoader(str(base)),
-        autoescape=select_autoescape(["html", "xml"]),
+        autoescape=True,  # The template ends in .j2; filename-based HTML detection would miss it.
     )
     tpl = env.get_template("newsletter.html.j2")
     return tpl.render(

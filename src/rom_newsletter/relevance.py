@@ -2,44 +2,45 @@ from __future__ import annotations
 
 import re
 from typing import Any
+from urllib.parse import urlparse
 
 from rom_newsletter.search import SearchHit, merge_hits_ordered
 
 # Weighted regexes: ROM / SciML / digital twins / physics-based simulation / CAE+AI
 _WEIGHTED: list[tuple[re.Pattern[str], int]] = [
     # Strong theme anchors (3)
-    (re.compile(r"digital\s+twins?", re.I), 3),
-    (re.compile(r"virtual\s+twins?", re.I), 3),
-    (re.compile(r"reduced[-\s]?order", re.I), 3),
-    (re.compile(r"model\s+order\s+reduction", re.I), 3),
-    (re.compile(r"scientific\s+machine\s+learning", re.I), 3),
-    (re.compile(r"physics[-\s]?informed", re.I), 3),
-    (re.compile(r"physics\s+ai|ai\s+physics", re.I), 3),
-    (re.compile(r"\bpinn\b|physics[-\s]?informed\s+neural", re.I), 3),
-    (re.compile(r"\bfno\b|fourier\s+neural\s+operator", re.I), 3),
-    (re.compile(r"\bdeeponet\b|neural\s+operator", re.I), 3),
-    (re.compile(r"surrogate\s+model", re.I), 3),
-    (re.compile(r"operator\s+learning", re.I), 3),
-    (re.compile(r"\bsciml\b|sci[-\s]?ml", re.I), 3),
-    (re.compile(r"\bpod\b|proper\s+orthogonal\s+decomposition", re.I), 2),
-    (re.compile(r"\brom\b", re.I), 2),  # word-ish; may match acronym in caps context
+    (re.compile(r"digital\s+twins?", re.IGNORECASE), 3),
+    (re.compile(r"virtual\s+twins?", re.IGNORECASE), 3),
+    (re.compile(r"reduced[-\s]?order", re.IGNORECASE), 3),
+    (re.compile(r"model\s+order\s+reduction", re.IGNORECASE), 3),
+    (re.compile(r"scientific\s+machine\s+learning", re.IGNORECASE), 3),
+    (re.compile(r"physics[-\s]?informed", re.IGNORECASE), 3),
+    (re.compile(r"physics\s+ai|ai\s+physics", re.IGNORECASE), 3),
+    (re.compile(r"\bpinn\b|physics[-\s]?informed\s+neural", re.IGNORECASE), 3),
+    (re.compile(r"\bfno\b|fourier\s+neural\s+operator", re.IGNORECASE), 3),
+    (re.compile(r"\bdeeponet\b|neural\s+operator", re.IGNORECASE), 3),
+    (re.compile(r"surrogate\s+model", re.IGNORECASE), 3),
+    (re.compile(r"operator\s+learning", re.IGNORECASE), 3),
+    (re.compile(r"\bsciml\b|sci[-\s]?ml", re.IGNORECASE), 3),
+    (re.compile(r"\bpod\b|proper\s+orthogonal\s+decomposition", re.IGNORECASE), 2),
+    (re.compile(r"\brom\b", re.IGNORECASE), 2),  # word-ish; may match acronym in caps context
     # Simulation / twins / CAE (2)
-    (re.compile(r"physics[-\s]based\s+simulation|multiphysics", re.I), 2),
-    (re.compile(r"\bcae\b|finite\s+element|\bcfd\b", re.I), 2),
-    (re.compile(r"simcenter|twin\s+builder|omniverse|modulus", re.I), 2),
-    (re.compile(r"predictive\s+simulation|simulation\s+software", re.I), 2),
-    (re.compile(r"physics\s+ml|physics[-\s]based\s+ml", re.I), 2),
-    (re.compile(r"continuous\s+physics|physics\s+intelligence|physics\s+as\s+infrastructure", re.I), 2),
-    (re.compile(r"surrogate|emulator", re.I), 2),
-    (re.compile(r"calibration|parameter\s+inference", re.I), 1),
+    (re.compile(r"physics[-\s]based\s+simulation|multiphysics", re.IGNORECASE), 2),
+    (re.compile(r"\bcae\b|finite\s+element|\bcfd\b", re.IGNORECASE), 2),
+    (re.compile(r"simcenter|twin\s+builder|omniverse|modulus", re.IGNORECASE), 2),
+    (re.compile(r"predictive\s+simulation|simulation\s+software", re.IGNORECASE), 2),
+    (re.compile(r"physics\s+ml|physics[-\s]based\s+ml", re.IGNORECASE), 2),
+    (re.compile(r"continuous\s+physics|physics\s+intelligence|physics\s+as\s+infrastructure", re.IGNORECASE), 2),
+    (re.compile(r"surrogate|emulator", re.IGNORECASE), 2),
+    (re.compile(r"calibration|parameter\s+inference", re.IGNORECASE), 1),
     # Digital engineering (1) — broad; used with min_score >= 2 typically
-    (re.compile(r"\bai[-\s]driven\s+engineering|engineering\s+ai", re.I), 1),
-    (re.compile(r"simulation|numerical\s+model", re.I), 1),
+    (re.compile(r"\bai[-\s]driven\s+engineering|engineering\s+ai", re.IGNORECASE), 1),
+    (re.compile(r"simulation|numerical\s+model", re.IGNORECASE), 1),
 ]
 
 
 def is_arxiv_hit(hit: SearchHit) -> bool:
-    return "arxiv.org" in hit.url.lower()
+    return urlparse(hit.url).hostname in {"arxiv.org", "www.arxiv.org", "export.arxiv.org"}
 
 
 def theme_score(
@@ -50,12 +51,35 @@ def theme_score(
     patterns = weighted if weighted is not None else _WEIGHTED
     if not patterns:
         return 0
-    blob = f"{hit.title}\n{hit.content}\n{hit.url}\n{hit.keyword}"
+    blob = f"{hit.title}\n{hit.content}"
     total = 0
     for pat, w in patterns:
         if pat.search(blob):
             total += w
     return total
+
+
+def rank_research_hits(
+    hits: list[SearchHit],
+    *,
+    max_hits: int = 25,
+    min_score: int = 2,
+    weighted_patterns: list[tuple[re.Pattern[str], int]] | None = None,
+) -> tuple[list[SearchHit], dict[str, Any]]:
+    """Score research by content, then retain a deterministic relevant shortlist."""
+    scored = [(theme_score(h, weighted_patterns), h) for h in hits]
+    # Input arXiv order is newest first; stable sorting uses recency to break score ties.
+    scored.sort(key=lambda pair: -pair[0])
+    eligible = [(s, h) for s, h in scored if s >= min_score]
+    kept = [h for _, h in eligible[:max_hits]]
+    return kept, {
+        "input": len(hits),
+        "kept": len(kept),
+        "min_score": min_score,
+        "below_threshold": len(scored) - len(eligible),
+        "capped": max(0, len(eligible) - len(kept)),
+        "scores": [{"url": h.url, "score": s, "selected": h in kept} for s, h in scored],
+    }
 
 
 def apply_theme_filter(
@@ -95,14 +119,13 @@ def apply_theme_filter(
         if max_non_arxiv is not None and len(kept) > max_non_arxiv:
             kept = kept[:max_non_arxiv]
         stats["non_arxiv_kept"] = len(kept)
-        stats["non_arxiv_dropped"] = 0
+        stats["non_arxiv_dropped"] = len(other) - len(kept)
         stats["backfilled"] = 0
         stats["enabled"] = False
         out = merge_hits_ordered(arxiv, kept)
         non_arx_out = [h for h in out if not is_arxiv_hit(h)]
         stats["non_arxiv_sample"] = [
-            {"url": h.url, "theme_score": theme_score(h, weighted_patterns)}
-            for h in non_arx_out[:20]
+            {"url": h.url, "theme_score": theme_score(h, weighted_patterns)} for h in non_arx_out[:20]
         ]
         return out, stats
 
@@ -141,7 +164,6 @@ def apply_theme_filter(
     out = merge_hits_ordered(arxiv, kept)
     non_arx_out = [h for h in out if not is_arxiv_hit(h)]
     stats["non_arxiv_sample"] = [
-        {"url": h.url, "theme_score": theme_score(h, weighted_patterns)}
-        for h in non_arx_out[:20]
+        {"url": h.url, "theme_score": theme_score(h, weighted_patterns)} for h in non_arx_out[:20]
     ]
     return out, stats

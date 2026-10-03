@@ -53,7 +53,7 @@ def _compile_theme_patterns(raw: list[dict[str, Any]]) -> list[tuple[re.Pattern[
         if not isinstance(w, int):
             continue
         try:
-            out.append((re.compile(pat, re.I), w))
+            out.append((re.compile(pat, re.IGNORECASE), w))
         except re.error as e:
             raise ValueError(f"Invalid theme regex: {pat!r}: {e}") from e
     return out
@@ -223,16 +223,7 @@ def load_topic_for_run(project_root: Path, cli_topic: Path | None) -> TopicProfi
 
 def _builtin_default_topic_profile() -> TopicProfile:
     """Hard-coded defaults matching shipped ``topic.json`` (no file on disk)."""
-    arxiv_search_query = (
-        "("
-        'all:"reduced order" OR all:"reduced-order" OR all:"model order reduction" OR all:ROM OR '
-        'all:"scientific machine learning" OR all:SciML OR all:"Physics AI" OR all:"AI Physics" OR '
-        'all:"operator learning" OR all:"neural operator" OR all:"surrogate model" OR '
-        'all:"engineering simulation" OR all:CAE OR all:"digital twin" OR all:"digital twins" OR '
-        'all:"robotics simulation" OR all:"physical AI" OR all:"robot learning" OR '
-        "cat:cs.LG OR cat:cs.CE OR cat:cs.NA OR cat:physics.comp-ph OR cat:math.NA"
-        ")"
-    )
+    arxiv_search_query = '(all:"reduced order" OR all:"reduced-order" OR all:"model order reduction" OR all:"scientific machine learning" OR all:"physics-informed" OR all:"neural operator" OR all:"operator learning" OR all:"surrogate model" OR all:"digital twin" OR all:"digital twins" OR all:"POD-Galerkin" OR all:"hyper-reduction" OR all:"DeepONet" OR all:"Fourier neural operator")'
     compose = ComposeTopic(
         editor_intro=(
             "You are an editor writing a concise weekly briefing for engineers and researchers "
@@ -252,7 +243,7 @@ def _builtin_default_topic_profile() -> TopicProfile:
             '- Put vendor press, product news, blogs, and commercial announcements under "industry_news" **only when** the excerpt clearly relates to our themes: reduced-order modeling, SciML, physics-informed / physics-based ML, neural operators / surrogates, digital or virtual twins, CAE/simulation platforms (e.g. twin builder, Omniverse, Modulus, Simcenter), or AI applied to engineering simulation / physics.\n'
             "- **Omit** industry subsections about unrelated topics (e.g. pure clinical trials with no simulation angle, generic enterprise IT, consumer hardware) unless the excerpt explicitly ties to simulation, twins, or physics/CAE AI.\n"
             "- Prefer fewer, stronger industry subsections over padding with weak matches.\n"
-            '- Each of "research_papers" and "industry_news" must have between 1 and 5 subsections (inclusive).\n'
+            '- Each of "research_papers" and "industry_news" must have between 0 and 5 subsections (inclusive); use 0 when there are no relevant excerpts.\n'
             '- Each subsection\'s "links" should list the 1-3 most relevant URLs from the excerpts that support it (URLs must appear in the corresponding block).'
         ),
         refine_system_extra=(
