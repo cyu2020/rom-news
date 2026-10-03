@@ -4,7 +4,7 @@ on:
   push:
     branches: [main]
     paths:
-      - "issues/2026-09-27/**"
+      - "issues/2026-09-27/newsletter-*"
   workflow_dispatch:
 
 permissions:

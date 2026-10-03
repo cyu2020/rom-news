@@ -1,0 +1,41 @@
+name: Publish reviewed issue to archive only
+
+on:
+  push:
+    branches: [main]
+    paths: ["issues/2026-09-27/archive-only.json"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: rom-newsletter-publication
+  cancel-in-progress: false
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
+jobs:
+  archive:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v5
+      - uses: astral-sh/setup-uv@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.13"
+      - run: uv sync --frozen --extra dev
+      - name: Regression checks
+        run: uv run --frozen pytest -q
+      - name: Publish existing reviewed draft as archive only
+        env:
+          BUTTONDOWN_API_KEY: ${{ secrets.BUTTONDOWN_API_KEY }}
+        run: uv run --frozen python -m rom_newsletter.archive_only
+      - uses: actions/upload-artifact@v6
+        if: always()
+        with:
+          name: archive-only-confirmation
+          path: archive-only-result.json
+          if-no-files-found: ignore
