@@ -55,7 +55,12 @@ def main():
         headers={"Authorization": f"Token {os.environ['BUTTONDOWN_API_KEY']}"},
         timeout=120,
     ) as client:
-        email = publish_archive_only(client, request["email_id"], request["issue_key"])
+        if request.get("verify_only"):
+            response = client.get(f"{BUTTONDOWN_EMAILS_URL}/{request['email_id']}")
+            response.raise_for_status()
+            email = response.json()
+        else:
+            email = publish_archive_only(client, request["email_id"], request["issue_key"])
     result = {key: email.get(key) for key in ("id", "status", "archival_mode", "email_type", "absolute_url")}
     Path("archive-only-result.json").write_text(json.dumps(result, indent=2))
     print(json.dumps(result))
