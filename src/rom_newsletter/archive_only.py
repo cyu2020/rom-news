@@ -27,26 +27,7 @@ def publish_archive_only(client: httpx.Client, email_id: str, issue_key: str) ->
         return email
     if email.get("status") != "draft":
         raise ValueError("Archive-only publishing requires the reviewed draft")
-    body = (email.get("body") or "").replace("DRAFT PREVIEW · NOT SENT", "ARCHIVE EDITION")
-    body = body.replace("Draft for review; no email send is authorized.", "Published to the web archive only; no subscriber email delivery.")
-    response = client.patch(url, json={"archival_mode": "archive_only", "body": body})
-    response.raise_for_status()
-    email = get_email()
-    if email.get("archival_mode") != "archive_only" or email.get("status") != "draft":
-        raise ValueError("Archive-only mode was not confirmed; refusing to publish")
-    try:
-        # Explicitly preserve archive-only mode in the publish transaction too.
-        response = client.post(url + "/publish", json={"archival_mode": "archive_only"})
-        response.raise_for_status()
-    except (httpx.TransportError, httpx.HTTPStatusError):
-        # Reconcile once; never blindly repeat a publish request.
-        email = get_email()
-        if email.get("archival_mode") != "archive_only" or email.get("status") not in {"sent", "imported"}:
-            raise RuntimeError("Archive publication outcome is unconfirmed; inspect before retrying") from None
-    email = get_email()
-    if email.get("archival_mode") != "archive_only" or email.get("status") not in {"sent", "imported"}:
-        raise RuntimeError("Buttondown has not confirmed archive publication")
-    return email
+    raise RuntimeError("Archive-only publishing is disabled: the publish endpoint caused subscriber delivery")
 
 
 def main():
@@ -66,7 +47,7 @@ def main():
     print(json.dumps(result))
     if os.environ.get("GITHUB_STEP_SUMMARY"):
         with open(os.environ["GITHUB_STEP_SUMMARY"], "a") as summary:
-            summary.write(f"Archive-only publication confirmed: {result['absolute_url']}\n\nNo subscriber email delivery.\n")
+            summary.write(f"Issue status: {result['status']}; archive mode: {result['archival_mode']}\n\nDelivery must be checked separately.\n")
 
 
 if __name__ == "__main__":
