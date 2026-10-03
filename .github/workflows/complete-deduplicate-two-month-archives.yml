@@ -1,0 +1,182 @@
+name: Complete and deduplicate August September archives only
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+  actions: read
+concurrency:
+  group: rom-newsletter-publication
+  cancel-in-progress: false
+jobs:
+  cleanup:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v5
+      - uses: astral-sh/setup-uv@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.13"
+      - run: uv sync --frozen --extra dev
+      - run: uv run --frozen pytest -q
+      - uses: actions/download-artifact@v5
+        with:
+          name: two-month-archive-inventory
+          path: dist/inventory
+          run-id: 37144783925
+          github-token: ${{ github.token }}
+      - uses: actions/download-artifact@v5
+        with:
+          name: remaining-august-archive-drafts
+          path: dist/drafts
+          run-id: 37145222652
+          github-token: ${{ github.token }}
+      - name: Apply reviewed content and reversible deduplication without sending
+        env:
+          BUTTONDOWN_API_KEY: ${{ secrets.BUTTONDOWN_API_KEY }}
+        run: |
+          uv run --frozen python - <<'PY'
+          import json, os, re
+          from pathlib import Path
+          from datetime import date, timedelta
+          from urllib.parse import urlparse
+          import httpx
+          from rom_newsletter.buttondown_publish import validate_issue_files, build_buttondown_body
+          from rom_newsletter.archive_only import publish_archive_only
+          
+          root=Path("dist")
+          baseline=json.loads((root/"inventory/archive-inventory.json").read_text())
+          by_id={e["id"]:e for e in baseline}
+          canonical={"2026-08-09":"em_42tkm68tbn8j09g25jqp61rj32","2026-08-16":"em_4twvmn8b8p9ke8wje2jx2hfg0h","2026-08-23":"em_7nwda6ezvq90crkz9bczt64d4g","2026-08-30":"em_7d51ha319280gb0an2px6yyfxy","2026-09-06":"em_4jn1z28gpg99dvwyj0vw7snc4a","2026-09-13":"em_3mexwpmqqm81crg100eexx3rxj","2026-09-20":"em_60x6p45408900tnm5hd6thrcjx","2026-09-27":"em_07cctpecb19wfr6238byaf7264"}
+          duplicate="em_771j6nshen857taxyz9p1593mj"
+          weeks=["2026-08-02"]+list(canonical)
+          api="https://api.buttondown.com/v1/emails"
+          def issue_key(stamp): return "rom-sciml-twins:"+stamp
+          def key(email): return (email.get("metadata") or {}).get("rom_newsletter_issue")
+          def week(email):
+              stamp=key(email)
+              if stamp and stamp.startswith("rom-sciml-twins:"):return stamp.split(":")[-1]
+              match=re.search(r"Week of\s*(2026-\d{2}-\d{2})",email.get("body") or "",re.I)
+              if match:return match.group(1)
+              if email["id"]==duplicate:return "2026-09-27"
+              if email["id"]==canonical["2026-08-09"]:return "2026-08-09"
+              return None
+          
+          # Reviewed editorial corrections: distinguish a category explainer from a product launch.
+          import hashlib
+          from rom_newsletter.compose import NewsletterDraft
+          from rom_newsletter.render import render_html
+          base=root/"drafts/newsletter-2026-08-02"
+          draft=NewsletterDraft.model_validate_json(base.with_suffix(".json").read_text())
+          assert draft.industry_news.subsections[1].links[0].url=="https://akselos.com/ai-for-structural-integrity-category"
+          draft.industry_news.intro="Siemens announced simulation software updates, while Akselos outlined AI for Structural Integrity."
+          draft.industry_news.subsections[0].body="Siemens announced the latest Simcenter software release, adding multi-GPU support in STAR-CCM+ and reporting 10x speed improvements and beyond for Simcenter PhysicsAI training on CFD data. Simcenter Simsolid now integrates with Designcenter to run mesh-free simulation directly on geometry."
+          draft.industry_news.subsections[1].title="Akselos explains AI for Structural Integrity"
+          draft.industry_news.subsections[1].body="Akselos describes AI for Structural Integrity (AI4SI) as a WEF-recognised category connecting real-time operating data to structural response. The company claims its RB-FEA solver runs full-asset structural simulations 1,000 times faster than conventional FEA at equivalent accuracy, enabling continuous structural visibility. This article explains the category rather than announcing a new product launch."
+          base.with_suffix(".json").write_text(json.dumps(draft.model_dump(),indent=2,ensure_ascii=False))
+          base.with_suffix(".html").write_text(render_html(draft,week_label="Week of 2026-08-02"))
+          manifest_path=Path(str(base)+"-selection.json");manifest=json.loads(manifest_path.read_text())
+          for ext in ("html","json"):manifest[ext+"_sha256"]=hashlib.sha256(base.with_suffix("."+ext).read_bytes()).hexdigest()
+          manifest_path.write_text(json.dumps(manifest,indent=2))
+          
+          base=root/"drafts/newsletter-2026-08-09"
+          draft=NewsletterDraft.model_validate_json(base.with_suffix(".json").read_text())
+          draft.industry_news.intro="PhysicsX and Siemens describe pre-trained physics models for automotive aerodynamics and an acoustic digital twin for theater rehearsals."
+          draft.industry_news.subsections[0].body="PhysicsX reports that fine-tuning its Large Physics Model on unseen automotive-aerodynamics datasets matches bespoke surrogates while using about 80% less simulation data, with the advantage growing as the design space expands. Its surface-context stream is designed to have low sensitivity to surface meshing, reducing the need for CFD-grade preprocessing."
+          draft.industry_news.subsections[1].body="Siemens describes an acoustic digital twin developed with the Bavarian State Opera that lets musicians, directors and conductors assess orchestra layouts and venue configurations in VR before rehearsals begin. The company says this can shorten rehearsal time and reduce logistics costs at the Bavarian National Theatre."
+          section=next(s for s in draft.research_papers.subsections if s.links[0].url=="https://arxiv.org/abs/2608.08608")
+          section.body="Ambient-domain embedding lets a single FNO operate across varying 2-D and 3-D geometries. Used to initialize conventional CFD solvers, the model yields author-reported mean reductions of about 43–44% in RANS pseudo-time iterations and 18.5–27.5% in URANS post-window time advances. In transfer from URANS training data to DNS, bootstrap intervals decrease by 23.5–48.2%, depending on the target statistic. These are iteration and time-advance reductions, rather than measured wall-clock speedups."
+          base.with_suffix(".json").write_text(json.dumps(draft.model_dump(),indent=2,ensure_ascii=False))
+          base.with_suffix(".html").write_text(render_html(draft,week_label="Week of 2026-08-09"))
+          manifest_path=Path(str(base)+"-selection.json");manifest=json.loads(manifest_path.read_text())
+          for ext in ("html","json"):manifest[ext+"_sha256"]=hashlib.sha256(base.with_suffix("."+ext).read_bytes()).hexdigest()
+          manifest_path.write_text(json.dumps(manifest,indent=2))
+          
+          drafts={}
+          for stamp in ("2026-08-02","2026-08-09"):
+              html,subject,manifest=validate_issue_files(root/"drafts",stamp)
+              assert manifest["issue_key"]==issue_key(stamp)
+              drafts[stamp]={"subject":subject,"body":build_buttondown_body(html),"sources":manifest["selected_urls"]}
+          reviewed=by_id[duplicate]
+          assert key(reviewed)=="reviewed:rom-sciml-twins:2026-09-27"
+          reviewed_body=reviewed["body"]
+          assert '<div class="wrap">' in reviewed_body and "September 21–27, 2026" in reviewed_body
+          reviewed_body=reviewed_body.replace('<div class="wrap">','<div class="wrap">\n    <p class="issue-label">Week of 2026-09-27</p>',1)
+          reviewed_body=reviewed_body.replace("Prepared as a standalone review draft from dated primary sources.","Prepared from dated primary sources.")
+          assert "DRAFT PREVIEW" not in reviewed_body
+          drafts["2026-09-27"]={"subject":reviewed["subject"],"body":reviewed_body,"sources":reviewed["metadata"]["rom_newsletter_sources"]}
+          
+          receipts=[]
+          with httpx.Client(headers={"Authorization":"Token "+os.environ["BUTTONDOWN_API_KEY"]},timeout=120) as client:
+              def get(email_id):
+                  r=client.get(api+"/"+email_id);r.raise_for_status();e=r.json();assert e["id"]==email_id;return e
+              def listing():
+                  result=[];url=api;seen=set()
+                  while url:
+                      assert url not in seen and urlparse(url).netloc=="api.buttondown.com" and urlparse(url).path=="/v1/emails"
+                      seen.add(url);r=client.get(url);r.raise_for_status();p=r.json();result.extend(p["results"]);url=p.get("next")
+                  return result
+              current=listing()
+              # Validate all pinned sent issues and the reviewed copy before any mutations.
+              for email_id in list(canonical.values())+[duplicate]:
+                  old=by_id[email_id];now=next(e for e in current if e["id"]==email_id)
+                  for field in ("body","subject","status","archival_mode","publish_date","metadata"):
+                      assert now.get(field)==old.get(field), "Archive changed since audit: "+email_id+" "+field
+                  assert now["status"]=="sent"
+              new_matches=[e for e in current if week(e)=="2026-08-02"]
+              assert len(new_matches)<=1, "Unexpected August 2 duplicates"
+              (root/"before.json").write_text(json.dumps(current,indent=2))
+              # Existing sent entries never enter a sending state: patch content and identity only.
+              for stamp,email_id in canonical.items():
+                  old=by_id[email_id];metadata=dict(old.get("metadata") or {})
+                  metadata["rom_newsletter_issue"]=issue_key(stamp)
+                  metadata["rom_newsletter_week_end"]=stamp
+                  payload={"metadata":metadata}
+                  if stamp in drafts:
+                      payload.update({k:drafts[stamp][k] for k in ("subject","body")})
+                      metadata["rom_newsletter_sources"]=drafts[stamp]["sources"]
+                  r=client.patch(api+"/"+email_id,json=payload);r.raise_for_status();now=get(email_id)
+                  assert now["status"]==old["status"] and now["publish_date"]==old["publish_date"] and now["archival_mode"]==old["archival_mode"]
+                  for field,value in payload.items():assert now[field]==value
+                  receipts.append({"week":stamp,"id":email_id,"url":now["absolute_url"],"operation":"content update" if stamp in drafts else "canonical week identity"})
+                  (root/"receipts.json").write_text(json.dumps(receipts,indent=2))
+              # Missing issue: create a draft, then import directly. Never call /publish or /send.
+              stamp="2026-08-02"
+              if new_matches:
+                  created=new_matches[0]
+                  assert created["status"] in {"draft","imported"} and key(created)==issue_key(stamp)
+              else:
+                  payload={k:drafts[stamp][k] for k in ("subject","body")}
+                  payload.update({"status":"draft","archival_mode":"archive_only","publish_date":(date.fromisoformat(stamp)+timedelta(days=1)).isoformat()+"T12:00:00Z","metadata":{"rom_newsletter_issue":issue_key(stamp),"rom_newsletter_week_end":stamp,"rom_newsletter_sources":drafts[stamp]["sources"]}})
+                  r=client.post(api,json=payload);r.raise_for_status();created=r.json();assert created["status"]=="draft"
+                  (root/"created-draft.json").write_text(json.dumps(created,indent=2))
+              imported=publish_archive_only(client,created["id"],issue_key(stamp))
+              assert imported["status"]=="imported" and imported["archival_mode"]=="archive_only"
+              assert imported["body"]==drafts[stamp]["body"] and imported["subject"]==drafts[stamp]["subject"]
+              canonical[stamp]=imported["id"]
+              receipts.append({"week":stamp,"id":imported["id"],"url":imported["absolute_url"],"operation":"archive-only import"})
+              (root/"receipts.json").write_text(json.dumps(receipts,indent=2))
+              # Hide the extra September 27 archive reversibly; preserve its content and send history.
+              r=client.patch(api+"/"+duplicate,json={"archival_mode":"disabled"});r.raise_for_status();hidden=get(duplicate)
+              assert hidden["archival_mode"]=="disabled"
+              for field in ("body","subject","status","publish_date","metadata"):assert hidden[field]==by_id[duplicate][field]
+              receipts.append({"week":"2026-09-27","id":duplicate,"operation":"hide duplicate","archival_mode":"disabled"})
+              (root/"receipts.json").write_text(json.dumps(receipts,indent=2))
+              final=listing();(root/"after.json").write_text(json.dumps(final,indent=2))
+              coverage={}
+              for stamp in weeks:
+                  visible=[e for e in final if week(e)==stamp and e["archival_mode"]!="disabled" and e["status"] in {"sent","imported"}]
+                  assert len(visible)==1 and visible[0]["id"]==canonical[stamp], "Incorrect archive coverage: "+stamp
+                  coverage[stamp]={"id":visible[0]["id"],"subject":visible[0]["subject"],"url":visible[0]["absolute_url"],"status":visible[0]["status"],"archival_mode":visible[0]["archival_mode"]}
+              (root/"coverage.json").write_text(json.dumps(coverage,indent=2))
+              print(json.dumps(coverage,indent=2))
+              with open(os.environ["GITHUB_STEP_SUMMARY"],"a") as f:
+                  f.write("Exactly one visible archive issue for each of nine August–September weeks. Duplicate hidden reversibly. No send or publish endpoint called.\n\n")
+                  for stamp,e in sorted(coverage.items()):f.write("- ["+stamp+"]("+e["url"]+")\n")
+          PY
+      - uses: actions/upload-artifact@v6
+        if: always()
+        with:
+          name: two-month-archive-cleanup-results
+          path: dist/
+          if-no-files-found: ignore
