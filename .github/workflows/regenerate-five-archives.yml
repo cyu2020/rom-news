@@ -119,6 +119,44 @@ jobs:
           from rom_newsletter.buttondown_publish import validate_issue_files, build_buttondown_body
           targets = {"2026-08-16":"em_4twvmn8b8p9ke8wje2jx2hfg0h","2026-08-23":"em_7nwda6ezvq90crkz9bczt64d4g","2026-08-30":"em_7d51ha319280gb0an2px6yyfxy","2026-09-06":"em_4jn1z28gpg99dvwyj0vw7snc4a","2026-09-13":"em_3mexwpmqqm81crg100eexx3rxj"}
           root = Path("dist")
+          import hashlib
+          from rom_newsletter.compose import NewsletterDraft
+          from rom_newsletter.render import render_html
+          
+          def apply_editorial_review(root):
+              corrections = {
+                  "2026-08-23": "Siemens and Akselos highlight digital-twin and surrogate-model offerings for maritime and structural applications.",
+                  "2026-09-13": "Siemens, Neural Concept and Akselos announced engineering partnerships and regional expansions this week.",
+              }
+              for stamp in ("2026-08-23", "2026-08-30", "2026-09-13"):
+                  base = root / ("newsletter-" + stamp)
+                  draft = NewsletterDraft.model_validate_json(base.with_suffix(".json").read_text())
+                  if stamp in corrections:
+                      draft.industry_news.intro = corrections[stamp]
+                  if stamp == "2026-08-30":
+                      section = draft.research_papers.subsections[-1]
+                      assert section.title == "Conformal UQ, p-Laplace PINNs and Spherical PDE Surrogates"
+                      section.title = "Conformal Uncertainty and p-Laplace PINNs"
+                      sentence = " Dandelion, a warp-based spherical network, tops a new benchmark suite of natively spherical PDEs while scaling favorably to 256×512 resolution."
+                      assert section.body.endswith(sentence)
+                      section.body = section.body[:-len(sentence)]
+                  base.with_suffix(".json").write_text(json.dumps(draft.model_dump(), indent=2, ensure_ascii=False))
+                  base.with_suffix(".html").write_text(render_html(draft, week_label="Week of " + stamp))
+                  manifest_path = Path(str(base) + "-selection.json")
+                  manifest = json.loads(manifest_path.read_text())
+                  for ext in ("html", "json"):
+                      manifest[ext + "_sha256"] = hashlib.sha256(base.with_suffix("." + ext).read_bytes()).hexdigest()
+                  manifest_path.write_text(json.dumps(manifest, indent=2))
+              (root / "editorial-review.json").write_text(json.dumps({
+                  "generation_run": 37128310116,
+                  "corrections": {
+                      "2026-08-23": "Remove aerospace from intro because final articles cover maritime and structural applications.",
+                      "2026-08-30": "Remove uncited Dandelion sentence and adjust subsection title; cited paper count remains 12.",
+                      "2026-09-13": "Remove Centric Software from intro because it is absent from selected articles."
+                  }
+              }, indent=2))
+          
+          apply_editorial_review(root)
           prepared = []
           # Validate every output and every pinned existing archive before making any writes.
           with httpx.Client(headers={"Authorization": "Token " + os.environ["BUTTONDOWN_API_KEY"]}, timeout=120) as client:
