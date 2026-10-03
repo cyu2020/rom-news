@@ -127,7 +127,10 @@ jobs:
                       expected.update({field:drafts[stamp][field] for field in ("body","subject")})
                       metadata["rom_newsletter_sources"]=drafts[stamp]["sources"]
                   expected["metadata"]=metadata
-                  for field,value in expected.items():assert now[field]==value, "Unexpected archive change: "+email_id+" "+field
+                  for field,value in expected.items():
+                      if field=="publish_date" and stamp in {"2026-08-16","2026-08-23"}:
+                          assert now[field]==value or now[field].startswith((date.fromisoformat(stamp)+timedelta(days=1)).isoformat()+"T12:00:00")
+                      else: assert now[field]==value, "Unexpected archive change: "+email_id+" "+field
               extra=next(e for e in current if e["id"]==duplicate)
               for field in ("body","subject","status","publish_date","metadata"):assert extra[field]==by_id[duplicate][field]
               assert extra["archival_mode"] in {by_id[duplicate]["archival_mode"],"disabled"}
@@ -138,6 +141,17 @@ jobs:
                   now=next(e for e in current if e["id"]==email_id)
                   receipts.append({"week":stamp,"id":email_id,"url":now["absolute_url"],"operation":"verified completed update"})
               (root/"receipts.json").write_text(json.dumps(receipts,indent=2))
+              # Correct archive display dates for the two historical catch-up issues.
+              for stamp in ("2026-08-16","2026-08-23"):
+                  email_id=canonical[stamp];before=get(email_id)
+                  target_date=(date.fromisoformat(stamp)+timedelta(days=1)).isoformat()+"T12:00:00Z"
+                  r=client.patch(api+"/"+email_id,json={"publish_date":target_date})
+                  if r.is_error:print("Archive date correction error:",r.status_code,r.text)
+                  r.raise_for_status();after=get(email_id)
+                  for field in ("status","archival_mode","metadata","body","subject"):assert after[field]==before[field]
+                  assert after["publish_date"].startswith(target_date[:-1])
+                  receipts.append({"week":stamp,"id":email_id,"operation":"correct archive display date","old_date":before["publish_date"],"new_date":after["publish_date"]})
+                  (root/"receipts.json").write_text(json.dumps(receipts,indent=2))
               # Missing issue: create a draft, then import directly. Never call /publish or /send.
               stamp="2026-08-02"
               if new_matches:
