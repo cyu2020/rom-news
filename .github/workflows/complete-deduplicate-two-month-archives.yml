@@ -117,29 +117,27 @@ jobs:
                       seen.add(url);r=client.get(url);r.raise_for_status();p=r.json();result.extend(p["results"]);url=p.get("next")
                   return result
               current=listing()
-              # Validate all pinned sent issues and the reviewed copy before any mutations.
-              for email_id in list(canonical.values())+[duplicate]:
+              # Verify the already-completed eight updates before resuming.
+              for stamp,email_id in canonical.items():
                   old=by_id[email_id];now=next(e for e in current if e["id"]==email_id)
-                  for field in ("body","subject","status","archival_mode","publish_date","metadata"):
-                      assert now.get(field)==old.get(field), "Archive changed since audit: "+email_id+" "+field
-                  assert now["status"]=="sent"
+                  metadata=dict(old.get("metadata") or {})
+                  metadata.update({"rom_newsletter_issue":issue_key(stamp),"rom_newsletter_week_end":stamp})
+                  expected={field:old[field] for field in ("body","subject","status","archival_mode","publish_date")}
+                  if stamp in drafts:
+                      expected.update({field:drafts[stamp][field] for field in ("body","subject")})
+                      metadata["rom_newsletter_sources"]=drafts[stamp]["sources"]
+                  expected["metadata"]=metadata
+                  for field,value in expected.items():assert now[field]==value, "Unexpected archive change: "+email_id+" "+field
+              extra=next(e for e in current if e["id"]==duplicate)
+              for field in ("body","subject","status","publish_date","metadata"):assert extra[field]==by_id[duplicate][field]
+              assert extra["archival_mode"] in {by_id[duplicate]["archival_mode"],"disabled"}
               new_matches=[e for e in current if week(e)=="2026-08-02"]
               assert len(new_matches)<=1, "Unexpected August 2 duplicates"
               (root/"before.json").write_text(json.dumps(current,indent=2))
-              # Existing sent entries never enter a sending state: patch content and identity only.
               for stamp,email_id in canonical.items():
-                  old=by_id[email_id];metadata=dict(old.get("metadata") or {})
-                  metadata["rom_newsletter_issue"]=issue_key(stamp)
-                  metadata["rom_newsletter_week_end"]=stamp
-                  payload={"metadata":metadata}
-                  if stamp in drafts:
-                      payload.update({k:drafts[stamp][k] for k in ("subject","body")})
-                      metadata["rom_newsletter_sources"]=drafts[stamp]["sources"]
-                  r=client.patch(api+"/"+email_id,json=payload);r.raise_for_status();now=get(email_id)
-                  assert now["status"]==old["status"] and now["publish_date"]==old["publish_date"] and now["archival_mode"]==old["archival_mode"]
-                  for field,value in payload.items():assert now[field]==value
-                  receipts.append({"week":stamp,"id":email_id,"url":now["absolute_url"],"operation":"content update" if stamp in drafts else "canonical week identity"})
-                  (root/"receipts.json").write_text(json.dumps(receipts,indent=2))
+                  now=next(e for e in current if e["id"]==email_id)
+                  receipts.append({"week":stamp,"id":email_id,"url":now["absolute_url"],"operation":"verified completed update"})
+              (root/"receipts.json").write_text(json.dumps(receipts,indent=2))
               # Missing issue: create a draft, then import directly. Never call /publish or /send.
               stamp="2026-08-02"
               if new_matches:
@@ -147,12 +145,20 @@ jobs:
                   assert created["status"] in {"draft","imported"} and key(created)==issue_key(stamp)
               else:
                   payload={k:drafts[stamp][k] for k in ("subject","body")}
-                  payload.update({"status":"draft","archival_mode":"archive_only","publish_date":(date.fromisoformat(stamp)+timedelta(days=1)).isoformat()+"T12:00:00Z","metadata":{"rom_newsletter_issue":issue_key(stamp),"rom_newsletter_week_end":stamp,"rom_newsletter_sources":drafts[stamp]["sources"]}})
-                  r=client.post(api,json=payload);r.raise_for_status();created=r.json();assert created["status"]=="draft"
+                  payload.update({"status":"draft","archival_mode":"archive_only","metadata":{"rom_newsletter_issue":issue_key(stamp),"rom_newsletter_week_end":stamp,"rom_newsletter_sources":drafts[stamp]["sources"]}})
+                  r=client.post(api,json=payload)
+                  if r.is_error: print("Archive creation error:",r.status_code,r.text)
+                  r.raise_for_status();created=r.json();assert created["status"]=="draft"
                   (root/"created-draft.json").write_text(json.dumps(created,indent=2))
               imported=publish_archive_only(client,created["id"],issue_key(stamp))
               assert imported["status"]=="imported" and imported["archival_mode"]=="archive_only"
               assert imported["body"]==drafts[stamp]["body"] and imported["subject"]==drafts[stamp]["subject"]
+              historical_date=(date.fromisoformat(stamp)+timedelta(days=1)).isoformat()+"T12:00:00Z"
+              r=client.patch(api+"/"+imported["id"],json={"publish_date":historical_date})
+              if r.is_error: print("Archive date error:",r.status_code,r.text)
+              r.raise_for_status();imported=get(imported["id"])
+              assert imported["status"]=="imported" and imported["archival_mode"]=="archive_only"
+              assert imported["publish_date"].startswith("2026-08-03T12:00:00")
               canonical[stamp]=imported["id"]
               receipts.append({"week":stamp,"id":imported["id"],"url":imported["absolute_url"],"operation":"archive-only import"})
               (root/"receipts.json").write_text(json.dumps(receipts,indent=2))
