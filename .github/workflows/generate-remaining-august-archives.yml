@@ -4,7 +4,6 @@ on:
 permissions:
   contents: read
   actions: read
-  actions: read
 concurrency:
   group: rom-newsletter-publication
   cancel-in-progress: false
