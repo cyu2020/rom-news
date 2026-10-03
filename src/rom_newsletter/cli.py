@@ -18,6 +18,7 @@ from rom_newsletter.compose import (
 from rom_newsletter.config import llm_model, project_root
 from rom_newsletter.dates import utc_window_for_week
 from rom_newsletter.history import load_seen_urls
+from rom_newsletter.industry_articles import enrich_industry_hits, industry_excerpt
 from rom_newsletter.newsroom_listings import fetch_newsroom_hits
 from rom_newsletter.relevance import apply_theme_filter, rank_research_hits
 from rom_newsletter.render import render_html
@@ -312,6 +313,9 @@ def main(argv: list[str] | None = None) -> None:
     discovered = merged
     merged, skipped_seen = filter_unseen(merged, seen)
     research, industry = split_hits_by_source_category(merged)
+    t_industry = time.perf_counter()
+    industry, industry_enrichment = enrich_industry_hits(industry)
+    industry_ms = _elapsed_ms(t_industry)
     research, research_stats = rank_research_hits(
         research,
         max_hits=args.max_research_hits,
@@ -336,6 +340,7 @@ def main(argv: list[str] | None = None) -> None:
     )
 
     research, industry = split_hits_by_source_category(merged)
+    industry = [industry_excerpt(h, args.excerpt_chars, topic.theme_patterns) for h in industry]
     research, research_budget = budget_hits(research, args.excerpt_chars, args.prompt_chars_per_track)
     industry, industry_budget = budget_hits(industry, args.excerpt_chars, args.prompt_chars_per_track)
     merged = merge_hits_ordered(research, industry)
@@ -343,6 +348,7 @@ def main(argv: list[str] | None = None) -> None:
         "arxiv": round(arxiv_ms, 1),
         "rss": round(rss_ms, 1),
         "newsroom": round(newsroom_ms, 1),
+        "industry_articles": round(industry_ms, 1),
     }
 
     report = pipeline_report_json(
@@ -361,6 +367,7 @@ def main(argv: list[str] | None = None) -> None:
     audit = json.loads(report)
     audit["discovered"] = {"hit_count": len(discovered), "hits": [vars(h) for h in discovered]}
     audit["research_selection"] = research_stats
+    audit["industry_enrichment"] = industry_enrichment
     audit["prompt_budget"] = {"research": research_budget, "industry": industry_budget}
     # Persist the exact excerpts sent to the model, so the result can be reviewed offline.
     audit["composition_inputs"] = [vars(h) for h in merged]
