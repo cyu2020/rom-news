@@ -1,0 +1,74 @@
+name: Regenerate September 20 archive without sending
+on:
+  push:
+    branches: [main]
+    paths: [".github/workflows/rerun-september20-archive.yml"]
+permissions:
+  contents: read
+concurrency:
+  group: rom-newsletter-publication
+  cancel-in-progress: false
+jobs:
+  archive-update:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v5
+      - uses: astral-sh/setup-uv@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.13"
+      - run: uv sync --frozen --extra dev
+      - run: uv run --frozen pytest -q
+      - name: Regenerate week ending September 20
+        env:
+          LLM_BASE_URL: ${{ secrets.LLM_BASE_URL }}
+          LLM_API_KEY: ${{ secrets.LLM_API_KEY }}
+          LLM_MODEL: ${{ secrets.LLM_MODEL }}
+          ROM_NEWSLETTER_ARXIV_USER_AGENT: ${{ vars.ROM_NEWSLETTER_ARXIV_USER_AGENT }}
+        run: uv run --frozen rom-newsletter --date 2026-09-20 --refine --no-skip-seen --output-dir dist
+      - name: Validate regenerated archive files
+        run: uv run --frozen rom-newsletter-buttondown --date 2026-09-20 --output-dir dist --dry-run
+      - name: Update existing sent issue archive only
+        env:
+          BUTTONDOWN_API_KEY: ${{ secrets.BUTTONDOWN_API_KEY }}
+        run: |
+          uv run --frozen python - <<'PY'
+          import os
+          from pathlib import Path
+          import httpx
+          from rom_newsletter.buttondown_publish import validate_issue_files, build_buttondown_body
+          html, subject, manifest = validate_issue_files(Path("dist"), "2026-09-20")
+          assert manifest["issue_key"] == "rom-sciml-twins:2026-09-20"
+          url = "https://api.buttondown.com/v1/emails/em_60x6p45408900tnm5hd6thrcjx"
+          with httpx.Client(headers={"Authorization": "Token " + os.environ["BUTTONDOWN_API_KEY"]}, timeout=120) as client:
+              before_response = client.get(url)
+              before_response.raise_for_status()
+              before = before_response.json()
+              assert before["status"] == "sent", "Only an existing sent archive can be updated"
+              assert "Week of 2026-09-20" in before["body"], "Wrong issue window"
+              before_date = before["publish_date"]
+              payload = {"subject": subject, "body": build_buttondown_body(html)}
+              # No creation, publish endpoint, or status transition is available here.
+              response = client.patch(url, json=payload)
+              response.raise_for_status()
+              after_response = client.get(url)
+              after_response.raise_for_status()
+              after = after_response.json()
+              assert after["id"] == before["id"]
+              assert after["status"] == "sent" and after["publish_date"] == before_date
+              assert after["subject"] == subject and after["body"] == payload["body"]
+              Path("dist/archive-update-result.json").write_text(__import__("json").dumps({
+                  "id": after["id"], "status": after["status"],
+                  "publish_date": after["publish_date"], "absolute_url": after["absolute_url"],
+                  "subject": after["subject"], "operation": "subject/body archive update; no send requested"
+              }, indent=2))
+              with open(os.environ["GITHUB_STEP_SUMMARY"], "a") as summary:
+                  summary.write("Updated existing September 20 archive entry. No send requested.\\n\\n" + after["absolute_url"])
+          PY
+      - uses: actions/upload-artifact@v6
+        if: always()
+        with:
+          name: september20-archive-rerun
+          path: dist/
+          if-no-files-found: ignore
