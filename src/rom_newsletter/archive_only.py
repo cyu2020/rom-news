@@ -3,12 +3,13 @@
 from __future__ import annotations
 
 import json
+import argparse
 import os
 from pathlib import Path
 
 import httpx
 
-from rom_newsletter.buttondown_publish import BUTTONDOWN_EMAILS_URL
+BUTTONDOWN_EMAILS_URL = "https://api.buttondown.com/v1/emails"
 
 
 def publish_archive_only(client: httpx.Client, email_id: str, issue_key: str) -> dict:
@@ -23,25 +24,35 @@ def publish_archive_only(client: httpx.Client, email_id: str, issue_key: str) ->
         return email
 
     email = get_email()
-    if email.get("status") in {"sent", "imported"} and email.get("archival_mode") == "archive_only":
+    if email.get("status") == "imported" and email.get("archival_mode") == "archive_only":
         return email
-    if email.get("status") != "draft":
-        raise ValueError("Archive-only publishing requires the reviewed draft")
-    raise RuntimeError("Archive-only publishing is disabled: the publish endpoint caused subscriber delivery")
+    if email.get("status") not in {"draft", "imported"}:
+        raise ValueError("Archive-only publishing requires a draft or imported email; sent/queued issues need inspection")
+    # /publish explicitly queues delivery. Import content directly into the
+    # archive instead, without passing through any sending state.
+    try:
+        response = client.patch(url, json={"status": "imported", "archival_mode": "archive_only"})
+        response.raise_for_status()
+    except (httpx.TransportError, httpx.HTTPStatusError):
+        # A write may have been accepted despite an error. Read once; never
+        # repeat a write or fall back to /publish.
+        pass
+    email = get_email()
+    if email.get("status") != "imported" or email.get("archival_mode") != "archive_only":
+        raise RuntimeError("Archive import outcome is unconfirmed; inspect Buttondown before retrying")
+    return email
 
 
 def main():
-    request = json.loads(Path("issues/2026-09-27/archive-only.json").read_text())
+    parser = argparse.ArgumentParser(description="Import a reviewed draft into the archive without queuing delivery")
+    parser.add_argument("--email-id", required=True)
+    parser.add_argument("--issue-key", required=True)
+    args = parser.parse_args()
     with httpx.Client(
         headers={"Authorization": f"Token {os.environ['BUTTONDOWN_API_KEY']}"},
         timeout=120,
     ) as client:
-        if request.get("verify_only"):
-            response = client.get(f"{BUTTONDOWN_EMAILS_URL}/{request['email_id']}")
-            response.raise_for_status()
-            email = response.json()
-        else:
-            email = publish_archive_only(client, request["email_id"], request["issue_key"])
+        email = publish_archive_only(client, args.email_id, args.issue_key)
     result = {key: email.get(key) for key in ("id", "status", "archival_mode", "email_type", "absolute_url")}
     Path("archive-only-result.json").write_text(json.dumps(result, indent=2))
     print(json.dumps(result))

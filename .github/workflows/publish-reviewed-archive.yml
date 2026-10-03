@@ -1,10 +1,16 @@
 name: Publish reviewed issue to archive only
 
 on:
-  push:
-    branches: [main]
-    paths: ["issues/2026-09-27/archive-only.json"]
   workflow_dispatch:
+    inputs:
+      email_id:
+        description: "Existing reviewed draft email ID (never a sent issue)"
+        required: true
+        type: string
+      issue_key:
+        description: "Exact rom_newsletter_issue metadata value"
+        required: true
+        type: string
 
 permissions:
   contents: read
@@ -12,9 +18,6 @@ permissions:
 concurrency:
   group: rom-newsletter-publication
   cancel-in-progress: false
-
-env:
-  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 
 jobs:
   archive:
@@ -29,10 +32,12 @@ jobs:
       - run: uv sync --frozen --extra dev
       - name: Regression checks
         run: uv run --frozen pytest -q
-      - name: Publish existing reviewed draft as archive only
+      - name: Import reviewed draft into archive
         env:
           BUTTONDOWN_API_KEY: ${{ secrets.BUTTONDOWN_API_KEY }}
-        run: uv run --frozen python -m rom_newsletter.archive_only
+          REVIEWED_EMAIL_ID: ${{ inputs.email_id }}
+          REVIEWED_ISSUE_KEY: ${{ inputs.issue_key }}
+        run: uv run --frozen python -m rom_newsletter.archive_only --email-id "$REVIEWED_EMAIL_ID" --issue-key "$REVIEWED_ISSUE_KEY"
       - uses: actions/upload-artifact@v6
         if: always()
         with:

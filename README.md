@@ -208,3 +208,23 @@ These ideas extend the completed retrieval → ranking → citation validation �
 - `docs/` — custom topic, newsroom, and agent conventions.
 
 Generated prose is a draft based on source excerpts. Verify important technical or commercial claims in the primary source before relying on them.
+
+## Archive-only publication
+
+Use the archive-only helper for an existing reviewed draft. It performs a single PATCH
+with `status: imported` and `archival_mode: archive_only`, then verifies the same
+email identity and both fields with GET. It never calls /publish, sets about_to_send,
+or falls back to the subscriber publisher. Already imported archive-only records are
+read-only reruns. Sent and queued records are rejected: archive settings cannot undo
+past delivery. The September 27 incident record must not be reused as a test draft.
+
+The archive workflow is manual-only and requires an email ID and matching issue key.
+The regular weekly newsletter workflow still intentionally sends to subscribers.
+Do not label a returned archive setting as proof of zero delivery; verify the public
+archive and Buttondown delivery events in an isolated test newsletter before using
+this new transition in production. Offline tests validate requests and reconciliation,
+not Buttondown's live delivery behavior.
+
+Provider references: https://docs.buttondown.com/api-emails-update and
+https://docs.buttondown.com/api-emails-status. The /publish endpoint explicitly sends:
+https://docs.buttondown.com/api-emails-publish.
