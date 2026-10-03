@@ -1,0 +1,48 @@
+name: Audit two months of Buttondown archives
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v5
+      - uses: astral-sh/setup-uv@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.13"
+      - run: uv sync --frozen
+      - name: Read archive inventory only
+        env:
+          BUTTONDOWN_API_KEY: ${{ secrets.BUTTONDOWN_API_KEY }}
+        run: |
+          uv run --frozen python - <<'PY'
+          import json, os, re
+          from pathlib import Path
+          from urllib.parse import urlparse
+          import httpx
+          root=Path("dist");root.mkdir(exist_ok=True)
+          emails=[];url="https://api.buttondown.com/v1/emails";visited=set()
+          with httpx.Client(headers={"Authorization":"Token "+os.environ["BUTTONDOWN_API_KEY"]},timeout=120) as client:
+              while url:
+                  assert url not in visited
+                  assert urlparse(url).netloc == "api.buttondown.com" and urlparse(url).path == "/v1/emails"
+                  visited.add(url)
+                  response=client.get(url);response.raise_for_status();page=response.json()
+                  emails.extend(page["results"]);url=page.get("next")
+          (root/"archive-inventory.json").write_text(json.dumps(emails,indent=2))
+          summary=[]
+          for email in emails:
+              body=email.get("body") or ""
+              weeks=sorted(set(re.findall(r"Week of\s*(2026-\d{2}-\d{2})",body,re.I)))
+              summary.append({k:email.get(k) for k in ("id","subject","status","archival_mode","publish_date","creation_date","modification_date","absolute_url","metadata")} | {"weeks":weeks,"body_length":len(body)})
+          (root/"archive-inventory-summary.json").write_text(json.dumps(summary,indent=2))
+          print(json.dumps(summary,indent=2))
+          
+          PY
+      - uses: actions/upload-artifact@v6
+        with:
+          name: two-month-archive-inventory
+          path: dist/
