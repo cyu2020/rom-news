@@ -1,8 +1,6 @@
 name: Regenerate September 20 archive without sending
 on:
-  push:
-    branches: [main]
-    paths: [".github/workflows/rerun-september20-archive.yml"]
+  workflow_dispatch:
 permissions:
   contents: read
 concurrency:
