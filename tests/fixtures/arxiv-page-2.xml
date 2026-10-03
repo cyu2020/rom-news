@@ -1,0 +1,4 @@
+<feed xmlns="http://www.w3.org/2005/Atom" xmlns:opensearch="http://a9.com/-/spec/opensearch/1.1/">
+<opensearch:totalResults>3</opensearch:totalResults>
+<entry><id>http://arxiv.org/abs/2609.99999v2</id><title>Reduced-order digital twin</title><summary>Model order reduction with POD for finite element simulation</summary><published>2026-09-28T10:00:00Z</published><link rel="alternate" href="http://arxiv.org/abs/2609.99999v2" /></entry>
+</feed>

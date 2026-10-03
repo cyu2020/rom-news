@@ -1,0 +1,5 @@
+<feed xmlns="http://www.w3.org/2005/Atom" xmlns:opensearch="http://a9.com/-/spec/opensearch/1.1/">
+<opensearch:totalResults>3</opensearch:totalResults>
+<entry><id>http://arxiv.org/abs/2610.00001v1</id><title>Generic language model tuning</title><summary>Language model benchmarks</summary><published>2026-10-02T10:00:00Z</published><link rel="alternate" href="http://arxiv.org/abs/2610.00001v1" /></entry>
+<entry><id>http://arxiv.org/abs/2610.00002v1</id><title>Neural operator for fluid simulation</title><summary>Operator learning for surrogate modeling</summary><published>2026-10-01T10:00:00Z</published><link rel="alternate" href="http://arxiv.org/abs/2610.00002v1" /></entry>
+</feed>

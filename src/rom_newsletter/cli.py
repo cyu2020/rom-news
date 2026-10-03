@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import sys
 import time
@@ -12,19 +13,22 @@ from rom_newsletter.compose import (
     compose_newsletter,
     newsletter_to_json_dict,
     openai_client,
+    validate_citations,
 )
 from rom_newsletter.config import llm_model, project_root
 from rom_newsletter.dates import utc_window_for_week
-from rom_newsletter.history import load_seen_urls, merge_history
+from rom_newsletter.history import load_seen_urls
 from rom_newsletter.newsroom_listings import fetch_newsroom_hits
-from rom_newsletter.relevance import apply_theme_filter
+from rom_newsletter.relevance import apply_theme_filter, rank_research_hits
 from rom_newsletter.render import render_html
 from rom_newsletter.rss_client import DEFAULT_FEED_URLS, fetch_rss_hits
 from rom_newsletter.search import (
+    budget_hits,
     filter_unseen,
     hits_to_split_bundle_text,
     merge_hits_ordered,
     pipeline_report_json,
+    split_hits_by_source_category,
 )
 from rom_newsletter.sources import (
     KIND_ARXIV,
@@ -122,8 +126,8 @@ def main(argv: list[str] | None = None) -> None:
     p.add_argument(
         "--arxiv-max",
         type=int,
-        default=25,
-        help="Max arXiv API results (1–2000; default 25)",
+        default=400,
+        help="arXiv candidate retrieval cap before ranking (1–2000; default 400)",
     )
     p.add_argument(
         "--dry-run-search",
@@ -154,7 +158,7 @@ def main(argv: list[str] | None = None) -> None:
         "--history-file",
         type=Path,
         default=None,
-        help="Seen-URL ledger JSON (default: <repo>/.rom-newsletter/seen_urls.json)",
+        help="Published-URL ledger JSON (default: <repo>/.rom-newsletter/published_urls.json)",
     )
     p.add_argument(
         "--refine",
@@ -176,7 +180,7 @@ def main(argv: list[str] | None = None) -> None:
     p.add_argument(
         "--theme-floor-non-arxiv",
         type=int,
-        default=5,
+        default=0,
         help="Target minimum non-arXiv hits; backfill only from scores >= --theme-backfill-min-score",
     )
     p.add_argument(
@@ -188,11 +192,27 @@ def main(argv: list[str] | None = None) -> None:
     p.add_argument(
         "--max-non-arxiv-hits",
         type=int,
-        default=48,
-        help="Max non-arXiv hits passed to the model after ranking (arXiv not capped)",
+        default=20,
+        help="Max non-arXiv hits passed to the model after ranking (default 20)",
     )
 
+    p.add_argument("--max-research-hits", type=int, default=25, help="Ranked research shortlist size (default 25)")
+    p.add_argument("--research-min-score", type=int, default=2, help="Research relevance threshold (default 2)")
+    p.add_argument("--excerpt-chars", type=int, default=1800, help="Per-story excerpt cap (default 1800)")
+    p.add_argument(
+        "--prompt-chars-per-track",
+        type=int,
+        default=30000,
+        help="Source bundle budget per track (default 30000 characters)",
+    )
+    p.add_argument(
+        "--allow-incomplete-arxiv",
+        action="store_true",
+        help="Allow compose when arXiv retrieval was capped or coverage is unknown",
+    )
     args = p.parse_args(argv)
+    if min(args.max_research_hits, args.excerpt_chars, args.prompt_chars_per_track) < 1:
+        p.error("Shortlist and prompt budgets must be positive")
     arxiv_max = max(1, min(2000, args.arxiv_max))
     if arxiv_max != args.arxiv_max:
         print(f"Clamped --arxiv-max to {arxiv_max}.", file=sys.stderr)
@@ -237,8 +257,9 @@ def main(argv: list[str] | None = None) -> None:
         sys.exit(1)
 
     allow = allowed_hosts(sources)
-    history_path = args.history_file or (root / ".rom-newsletter" / "seen_urls.json")
-    seen: set[str] = set() if args.no_skip_seen else load_seen_urls(history_path)
+    history_path = args.history_file or (root / ".rom-newsletter" / "published_urls.json")
+    issue_key = f"{topic.name}:{stamp}"
+    seen: set[str] = set() if args.no_skip_seen else load_seen_urls(history_path, exclude_issue=issue_key)
 
     arxiv_ms = rss_ms = newsroom_ms = 0.0
 
@@ -271,10 +292,7 @@ def main(argv: list[str] | None = None) -> None:
         rss_meta = {
             "hit_count": len(rss_hits),
             "errors": rss_errors,
-            "feeds": [
-                {"url": u, "extra_feed_hosts": sorted(eh)}
-                for u, eh in feed_entries
-            ],
+            "feeds": [{"url": u, "extra_feed_hosts": sorted(eh)} for u, eh in feed_entries],
         }
 
     newsroom_hits: list = []
@@ -291,7 +309,16 @@ def main(argv: list[str] | None = None) -> None:
         newsroom_ms = _elapsed_ms(t_newsroom)
 
     merged = merge_hits_ordered(arxiv_hits, rss_hits, newsroom_hits)
+    discovered = merged
     merged, skipped_seen = filter_unseen(merged, seen)
+    research, industry = split_hits_by_source_category(merged)
+    research, research_stats = rank_research_hits(
+        research,
+        max_hits=args.max_research_hits,
+        min_score=0 if topic.theme_disabled else max(0, args.research_min_score),
+        weighted_patterns=topic.theme_patterns,
+    )
+    merged = merge_hits_ordered(research, industry)
 
     if topic.theme_disabled and args.theme_min_score > 0:
         print(
@@ -308,6 +335,10 @@ def main(argv: list[str] | None = None) -> None:
         weighted_patterns=topic.theme_patterns,
     )
 
+    research, industry = split_hits_by_source_category(merged)
+    research, research_budget = budget_hits(research, args.excerpt_chars, args.prompt_chars_per_track)
+    industry, industry_budget = budget_hits(industry, args.excerpt_chars, args.prompt_chars_per_track)
+    merged = merge_hits_ordered(research, industry)
     phase_timings_ms = {
         "arxiv": round(arxiv_ms, 1),
         "rss": round(rss_ms, 1),
@@ -327,7 +358,13 @@ def main(argv: list[str] | None = None) -> None:
 
     base = f"newsletter-{stamp}"
     search_path = out_dir / f"{base}-search.json"
-    search_path.write_text(report, encoding="utf-8")
+    audit = json.loads(report)
+    audit["discovered"] = {"hit_count": len(discovered), "hits": [vars(h) for h in discovered]}
+    audit["research_selection"] = research_stats
+    audit["prompt_budget"] = {"research": research_budget, "industry": industry_budget}
+    # Persist the exact excerpts sent to the model, so the result can be reviewed offline.
+    audit["composition_inputs"] = [vars(h) for h in merged]
+    search_path.write_text(json.dumps(audit, indent=2, ensure_ascii=False), encoding="utf-8")
 
     if args.dry_run_search:
         _log_phase_timings(
@@ -337,15 +374,17 @@ def main(argv: list[str] | None = None) -> None:
             compose_ms=None,
         )
         print(f"Window (UTC): {window_meta['start']} .. {window_meta['end']}")
-        print(
-            f"arXiv hits: {len(arxiv_hits)}  RSS hits: {len(rss_hits)}  "
-            f"Newsroom hits: {len(newsroom_hits)}"
-        )
+        print(f"arXiv hits: {len(arxiv_hits)}  RSS hits: {len(rss_hits)}  Newsroom hits: {len(newsroom_hits)}")
         print(f"Merged (after skip-seen + theme filter): {len(merged)}  skipped_seen: {skipped_seen}")
         if theme_stats:
             print(f"Theme filter: {theme_stats}")
         print(f"Wrote {search_path}")
         return
+
+    if arxiv_meta and (arxiv_meta["truncated"] or arxiv_meta["coverage_unknown"]) and not args.allow_incomplete_arxiv:
+        raise RuntimeError(
+            "arXiv coverage is incomplete. Increase --arxiv-max or explicitly use --allow-incomplete-arxiv; inspect the search audit."
+        )
 
     try:
         model = args.model.strip() if args.model else llm_model()
@@ -364,6 +403,7 @@ def main(argv: list[str] | None = None) -> None:
         week_hint=week_label,
         refine=args.refine,
         topic=topic,
+        input_hits=merged,
     )
     compose_ms = _elapsed_ms(t_compose)
     _log_phase_timings(
@@ -389,12 +429,27 @@ def main(argv: list[str] | None = None) -> None:
     html_path = out_dir / f"{base}.html"
     html_path.write_text(html_str, encoding="utf-8")
 
-    merge_history(history_path, [h.url for h in merged])
+    selected_urls = validate_citations(draft, merged)
+    selection_path = out_dir / f"{base}-selection.json"
+    selection_path.write_text(
+        json.dumps(
+            {
+                "issue_key": f"{topic.name}:{stamp}",
+                "week_end": stamp,
+                "selected_urls": selected_urls,
+                "history_file": str(history_path),
+                "html_sha256": hashlib.sha256(html_path.read_bytes()).hexdigest(),
+                "json_sha256": hashlib.sha256(json_path.read_bytes()).hexdigest(),
+            },
+            indent=2,
+        ),
+        encoding="utf-8",
+    )
 
     print(f"Wrote {html_path}")
     print(f"Wrote {json_path}")
     print(f"Wrote {search_path}")
-    print(f"Updated history: {history_path}")
+    print(f"Wrote selection manifest: {selection_path} (history updates only after publishing)")
 
 
 if __name__ == "__main__":

@@ -1,271 +1,210 @@
 # ROM newsletter agent
 
-Generates a weekly-style briefing on **reduced-order modeling**, **scientific machine learning**, and **digital twins** from sources such as **arXiv**, selected **RSS**, and selected **newsroom** listing:
+A weekly briefing for engineers and researchers working in **reduced-order modeling (ROM)**, **scientific machine learning (SciML)**, and **digital twins**. It discovers papers and industry announcements, ranks relevant stories, composes a cited draft, renders HTML, and publishes through Buttondown.
 
-1. **arXiv** — Official Atom API with `**submittedDate:[start TO end]`** in UTC (no duplicate web-scrape of arXiv).
-2. **RSS** — Feeds come from optional `**rss`** (and `**feed_hosts**`) on entries in `[sources.json](sources.json)`, then small built-in defaults in code (deduped by URL). **Per-source `rss` wins** if the same feed URL appears twice. The feed URL’s hostname must match a domain from your sources list, **or** set `**feed_hosts`** (e.g. `news.synopsys.com` for [Synopsys Simulation & Analysis RSS](https://news.synopsys.com/home?pagetemplate=rss&category=778)). Items are filtered by **published date** inside the window; article links may be off-domain.
-3. **Newsroom listings** (optional) — Sources with `**newsroom_listing: true`** use built-in discovery: HTML listing parsers for `**id**` `physicsx`, `neural-concept`, `emmi-ai`, `**luminary**` (Press cards on `**luminary.ai/resources**`), `**vinci4d**` (`**getvinci.ai/news**`), `**akselos**` (News-filter resource hub); `**id**` `**siemens**` uses `**news.siemens.com/en-us/sitemap-en-us.xml**`; `**id**` `**p1-ai**` pulls curated **press** links from the `**p-1.ai`** homepage. Dates come from the listing (PhysicsX, Luminary Press cards), article pages (Neural Concept, Emmi, P-1, Vinci, Akselos when missing on the index), or **sitemap `<lastmod>`** (Siemens). Use `**--no-newsroom**` to skip.
-4. **Dedupe** — Merged list excludes URLs already recorded in `[.rom-newsletter/seen_urls.json](.rom-newsletter/seen_urls.json)` (disable with `--no-skip-seen`).
-5. **Theme filter** — Non–arXiv hits get a **theme score** (keywords for digital/virtual twins, ROM, SciML, PINNs, operators, CAE, simulation platforms, etc.). Hits below `--theme-min-score` are dropped; optional **backfill** only from scores ≥ `--theme-backfill-min-score`. arXiv hits are never scored out.
-6. **Compose** — `POST /v1/chat/completions` → structured JSON: **Research Papers** and **Industry News**, each with an intro and up to five subsections (title, body, links); subject line only (no global intro/takeaway; citations live under each subsection). Discovery tags each hit with `**sources.json` `category`** (`papers` vs `industry`); the LLM receives **two excerpt blocks** (research vs industry) so sections stay aligned with configured sources. The model is instructed to **skip** off-topic industry stories.
-7. **Render** — Jinja2 → single HTML file (**Industry News** block first, then **Research Papers**).
+The pipeline keeps **discovered candidates**, **composition inputs**, **cited stories**, and **published stories** separate. Generating a draft does not mark its candidates as published.
 
-## Setup
+## Quick start
 
-- Python **3.11+** (project uses **3.13** in `.venv` per team convention).
-- **LLM (OpenAI-compatible chat API)** — set the three variables below in `.env` at the repo root (never commit this file). Use any provider that exposes `**POST …/chat/completions`** with the OpenAI SDK (e.g. **OpenRouter** `https://openrouter.ai/api/v1`, or a local OpenAI-compatible server). There are **no** built-in defaults; every value must come from the environment.
-
-
-| Variable       | Purpose                                                         |
-| -------------- | --------------------------------------------------------------- |
-| `LLM_BASE_URL` | API base URL including `/v1` (no trailing slash).               |
-| `LLM_API_KEY`  | Bearer token for that API.                                      |
-| `LLM_MODEL`    | Default model id for compose (override per run with `--model`). |
-
+Requires Python **3.11+** and [uv](https://docs.astral.sh/uv/). Scheduled runs use Python 3.13. The committed `uv.lock` makes dependency installation reproducible.
 
 ```bash
-cd /path/to/rom-news
-uv venv -p 3.13 .venv
-uv pip install --python .venv/bin/python -e .
-source .venv/bin/activate   # optional; or invoke .venv/bin/python -m rom_newsletter
+uv sync --frozen --extra dev
+
+# Inspect discovery and selection without calling an LLM.
+uv run rom-newsletter --date 2026-10-04 --dry-run-search
+
+# Generate a cited HTML draft and its audit files.
+uv run rom-newsletter --date 2026-10-04 --refine
+
+# Validate generated files without contacting Buttondown.
+uv run rom-newsletter-buttondown --date 2026-10-04 --dry-run
+
+# Create a Buttondown draft for review.
+uv run rom-newsletter-buttondown --date 2026-10-04 --draft
+
+# Queue that same draft for subscribers after review.
+uv run rom-newsletter-buttondown --date 2026-10-04
 ```
 
-`**--dry-run-search**` does not call the LLM, so `LLM_*` are not required for that mode. A **full** run needs all three `LLM_*` variables (or `--model` plus `LLM_BASE_URL` and `LLM_API_KEY`).
+Set the following in a repository-root `.env` or the environment. Never commit `.env`.
 
-Other environment variables:
+| Variable | Purpose |
+| --- | --- |
+| `LLM_BASE_URL` | OpenAI-compatible chat API base URL, including `/v1` where required |
+| `LLM_API_KEY` | API token for composition |
+| `LLM_MODEL` | Model ID; overridable with `--model` |
+| `BUTTONDOWN_API_KEY` | Required for creating, updating, or sending a Buttondown email |
 
+Discovery-only mode does not require LLM credentials. Publishing dry-run does not require Buttondown credentials.
 
-| Variable                            | Purpose                                                                                                                                                                      |
-| ----------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `BUTTONDOWN_API_KEY`                | Buttondown token for `rom-newsletter-buttondown` (local or CI)                                                                                                               |
-| `BUTTONDOWN_API_VERSION`            | Optional `X-API-Version` for Buttondown (e.g. `2026-04-01`)                                                                                                                  |
-| `ROM_NEWSLETTER_ARXIV_READ_TIMEOUT` | Override arXiv HTTP **read** timeout in seconds (default **180**; raise in CI if `export.arxiv.org` is slow)                                                                 |
-| `ROM_NEWSLETTER_ARXIV_USER_AGENT`   | Custom `User-Agent` for arXiv API calls ([API manual](https://arxiv.org/help/api/user-manual)); helps avoid **429** rate limits from shared IPs (e.g. GitHub Actions)        |
-| `ROM_NEWSLETTER_TOPIC`              | Path to a `topic.json` profile (arXiv query, theme patterns, compose copy, section titles, Buttondown fallback subject). Overrides the default `<repo>/topic.json` when set. |
+## How selection works
 
+1. **Discover within a UTC window.** `--date` is the final day, not the first day. The default seven-day window for `2026-10-04` is September 28 through October 4, inclusive.
+2. **Retrieve arXiv candidates across the window.** The shipped topic query uses specific ROM/SciML/twin phrases rather than OR-ing entire categories such as `cs.LG`. The client pages through results, spaces API requests, and records total matches and coverage. The default retrieval cap is **400** candidates; this is separate from the composition shortlist.
+3. **Discover industry stories.** Sources in [sources.json](sources.json) supply RSS feeds and supported newsroom listings. Newsroom discovery already uses a worker pool; RSS fetches remain sequential. Publication dates are checked against the window. Siemens sitemap dates are modification dates and can represent edits to older stories.
+4. **Skip stories published in other issues.** The published-history ledger is applied before ranking. Stories from the issue being regenerated remain eligible, so rerunning the same week does not empty its content.
+5. **Rank by relevance.** Weighted theme patterns score titles and excerpts; URLs and query labels cannot inflate scores. Research needs score **2** and is capped at **25** stories. Industry needs score **2** and is capped at **20**. Automatic industry backfill is disabled by default, so a quiet week stays short. Scores and decisions are included in the audit.
+6. **Bound model inputs.** Each excerpt is capped at **1,800 characters** and each track's source bundle at **30,000 characters**. Stories that cannot fit are omitted. These are character budgets, not exact tokenizer limits.
+7. **Compose and validate.** Research and industry inputs are separate. Every substantive subsection must cite **1–3 supplied sources from its own track**. Unknown, unsafe, missing, or cross-track citations fail validation after composition and optional refinement. Empty tracks use an honest intro and zero subsections.
+8. **Render and record selection.** HTML, JSON, exact input excerpts, selected URLs, and file hashes are saved. Publishing verifies those hashes and citations again before any write to Buttondown.
 
-## Custom topics (`topic.json`)
+If arXiv matches exceed the retrieval cap, or total coverage cannot be established, full generation stops after writing the audit. Increase `--arxiv-max`, narrow the query, or explicitly use `--allow-incomplete-arxiv` if partial coverage is acceptable. Search-only mode still produces diagnostics.
 
-Discovery strings, arXiv Lucene body, theme regexes, composer instructions, HTML section headings, and the Buttondown subject fallback can live in `**[topic.json](topic.json)`** (or another file via `**--topic**` / `**ROM_NEWSLETTER_TOPIC**`). `**[sources.json](sources.json)**` stays the place for feeds and URL allowlists. See `**[docs/custom-topic.md](docs/custom-topic.md)**` for a checklist, loading rules, and a stub profile. Newsroom parsers are documented separately in `**[docs/newsroom_listings.md](docs/newsroom_listings.md)**` (vendor-specific code, not driven by `topic.json`).
+Citation checks establish **source provenance**, not whether every sentence follows from its source. The optional `--refine` pass reviews claims against the provided excerpts; human review remains useful for metrics, technical comparisons, and vendor claims.
 
-## Usage
+## Configuration and CLI
 
-**Full pipeline** (discovery → LLM → HTML + JSON under `dist/`):
+[topic.json](topic.json) controls the arXiv query, theme weights, editorial instructions, section headings, and fallback subject. A missing default topic file uses built-in ROM defaults. Explicit custom paths must exist. See [custom topics](docs/custom-topic.md).
+
+[sources.json](sources.json) controls source categories, feeds, and newsroom discovery. A source needs `label` and `url`, with optional `id`, `category`, `kind`, `rss`, `feed_hosts`, and `newsroom_listing`. The feed hostname must be allowed by the source configuration; `feed_hosts` adds permitted feed hosts. Article links can be off-domain. Per-source RSS entries win over duplicate built-in feed URLs. See [newsroom parsers](docs/newsroom_listings.md) and the JSON schemas for editor assistance.
+
+| Generation option | Default / behavior |
+| --- | --- |
+| `--date YYYY-MM-DD` | Window ending date; defaults to the local calendar date |
+| `--window-days N` | 7 inclusive UTC days |
+| `--arxiv-max N` | Retrieve up to 400 candidates; range 1–2000 |
+| `--max-research-hits N` | Send at most 25 ranked research stories to composition |
+| `--research-min-score N` | Research relevance threshold: 2 |
+| `--max-non-arxiv-hits N` | Industry shortlist cap: 20 |
+| `--theme-min-score N` | Industry threshold: 2; 0 disables filtering but retains ranking/cap |
+| `--theme-floor-non-arxiv N` | Industry backfill target: 0 (disabled) |
+| `--theme-backfill-min-score N` | Explicitly enabled backfill requires score ≥1 by default |
+| `--excerpt-chars N` | Per-story excerpt cap: 1800 |
+| `--prompt-chars-per-track N` | Per-track source bundle cap: 30000 |
+| `--allow-incomplete-arxiv` | Explicitly permit capped/unknown arXiv coverage |
+| `--dry-run-search` | Discovery/selection only; no LLM or history mutation |
+| `--refine` | Additional LLM review; final citations are still checked in code |
+| `--model ID` | Override `LLM_MODEL` |
+| `--no-arxiv`, `--no-rss`, `--no-newsroom` | Skip discovery channels |
+| `--no-skip-seen` | Include stories published in other issues |
+| `--history-file PATH` | Override published-history path |
+| `--sources PATH`, `--topic PATH` | Override source/topic configuration |
+| `--output-dir PATH`, `--template-dir PATH` | Override output/template paths |
+
+A custom profile with `theme.disabled: true` disables both research and industry relevance thresholds; caps and prompt budgets still apply.
+
+Additional environment settings:
+
+| Variable | Purpose |
+| --- | --- |
+| `ROM_NEWSLETTER_TOPIC` | Custom topic profile; `--topic` takes precedence |
+| `ROM_NEWSLETTER_ARXIV_USER_AGENT` | Identifying arXiv User-Agent, useful on shared CI IPs |
+| `ROM_NEWSLETTER_ARXIV_READ_TIMEOUT` | arXiv read timeout in seconds; default 180 |
+| `BUTTONDOWN_API_VERSION` | Optional Buttondown `X-API-Version` header |
+
+## Outputs and publication history
+
+For `--date 2026-10-04`, generation writes:
+
+- `dist/newsletter-2026-10-04.html` — rendered issue.
+- `dist/newsletter-2026-10-04.json` — structured newsletter.
+- `dist/newsletter-2026-10-04-search.json` — discovery candidates, per-channel diagnostics, research scores, industry selection statistics, exact composition inputs, prompt budgets, and discovery timings.
+- `dist/newsletter-2026-10-04-selection.json` — issue key (`<topic-name>:<week-end>`), cited URLs, history path, and HTML/JSON hashes.
+
+Publishing maintains:
+
+- `.rom-newsletter/publications.json` — Buttondown email IDs, statuses, cited URLs, and pending create/send outcomes.
+- `.rom-newsletter/published_urls.json` — URLs accepted for publication, grouped by issue. Queued emails count as published for deduplication; drafts do not. Archive edits preserve URLs already emailed in that issue.
+
+arXiv abstract/PDF URLs and version suffixes normalize to one paper identity. Common tracking parameters are removed from article URLs while meaningful query parameters are preserved.
+
+**Migration:** the old `seen_urls.json` recorded all composition candidates and is no longer the default. It is not automatically imported because it cannot distinguish omitted stories from published ones. An explicit `--history-file` can still read a legacy list/URL ledger for discovery. When publishing, use the new issue-aware ledger rather than reusing legacy state. Existing Buttondown issues can be recovered by their legacy `Week of <date>` body label for the default ROM topic.
+
+## Dependable Buttondown publishing
+
+Publishing creates a **draft first**, saves its email ID, and then queues that same ID. A deterministic issue key and source list are also stored in Buttondown metadata. The publisher uses a local file lock, and the weekly workflow serializes runs sharing publication state.
+
+On reruns:
+
+- A saved email ID is reused; a missing/deleted saved email stops the run rather than triggering a replacement send.
+- If local state is missing, Buttondown metadata is searched before creating anything. Multiple matches stop the run for inspection.
+- A draft can be updated and later queued using the same ID.
+- An already-sent email receives a subject/body archive update without a status change or resend.
+- A queued, scheduled, or in-flight email is left untouched; its stored source list is used for history rather than a newly generated draft's citations.
+
+An uncertain create or send is reconciled with a read. If acceptance cannot be confirmed, pending state is saved and the run stops. **POST creation and send transitions are never blindly retried.** Lookup reads retry transient failures. This reduces duplicate-send risk; it is not a provider-backed exactly-once guarantee across arbitrary independent machines.
+
+| Publishing option | Behavior |
+| --- | --- |
+| `--draft` | Create/update a draft without queuing it; existing sent issues remain sent |
+| `--dry-run` | Validate generated files and print a summary; no API call |
+| `--state-file PATH` | Override `.rom-newsletter/publications.json` |
+| `--history-file PATH` | Override the manifest's publication-history path, useful when moving artifacts between machines |
+| `--api-version VERSION` | Override the environment's Buttondown API version |
+
+The old `--no-dedupe` escape hatch was removed so normal reruns always recover the existing issue. Publishing requires the generated selection manifest and search audit; regenerate older standalone HTML files before publishing. Editing generated HTML/JSON invalidates the manifest hashes. An issue with no cited stories can be saved as a draft but cannot be sent.
+
+The API request uses Buttondown's documented `X-Buttondown-Live-Dangerously` header for programmatic sending. Never run the publishing command without `--draft` or `--dry-run` unless you intend to send to subscribers.
+
+## Scheduled runs and checks
+
+[Weekly newsletter](.github/workflows/weekly-newsletter.yml) runs every **Monday at 14:00 UTC**, using the previous Sunday as the window end. In Chicago this is 9 a.m. during daylight saving time and 8 a.m. during standard time. Scheduled execution is best-effort and may be delayed.
+
+1. Enable GitHub Actions for the repository.
+2. Add repository secrets: `LLM_BASE_URL`, `LLM_API_KEY`, `LLM_MODEL`, and `BUTTONDOWN_API_KEY`.
+3. Optionally add repository variable `ROM_NEWSLETTER_ARXIV_USER_AGENT` with an identifying project URL/contact.
+4. For a manual run, open **Actions → Weekly newsletter → Run workflow** and optionally enter a week-ending date. This workflow publishes to subscribers.
+
+The workflow restores publication state, installs locked dependencies, runs regression tests, generates with `--refine`, validates publication files, and publishes. It uses the default relevance thresholds and published-story deduplication. State is saved even after failures, and issue artifacts plus state JSON are uploaded for recovery.
+
+GitHub Actions cache is **best-effort storage** and can be evicted. Buttondown identity lookup still protects issue reruns if the cache disappears, but restoring the publication ledger from the last workflow artifact preserves cross-issue story deduplication. Local machines and CI do not automatically share history; use the same state files for consistent selection. Do not run independent publishers for the same issue concurrently.
+
+[Checks](.github/workflows/checks.yml) runs offline regression tests and lint checks for pull requests and pushes to `main`. Tests use saved arXiv feeds and mocked Buttondown responses; they do not send email or call an LLM.
 
 ```bash
-rom-newsletter --date 2025-03-20
+uv sync --frozen --extra dev
+uv run --frozen ruff check src tests
+uv run --frozen pytest -q
 ```
 
-**Time window** — UTC range ending on `--date` (inclusive of that calendar day’s end):
-
-- `--window-days 7` (default): last 7 days through `--date`.
-
-**Search-only** (writes `*-search.json` with arXiv + RSS + newsroom breakdown; no LLM):
-
-```bash
-rom-newsletter --dry-run-search
-```
-
-**Large arXiv pulls** can dominate the LLM context — the default cap is `**--arxiv-max 25`**; raise if you need more:
-
-```bash
-rom-newsletter --arxiv-max 100
-```
-
-**Other flags**
-
-
-| Flag                             | Purpose                                                                                                            |
-| -------------------------------- | ------------------------------------------------------------------------------------------------------------------ |
-| `--model <id>`                   | Override `LLM_MODEL` for this run                                                                                  |
-| `--arxiv-max N`                  | Max results from the arXiv API (1–2000; default `25`)                                                              |
-| `--no-arxiv`                     | Skip arXiv API                                                                                                     |
-| `--no-rss`                       | Skip RSS feeds                                                                                                     |
-| `--no-newsroom`                  | Skip newsroom listing scrapes (`newsroom_listing` in sources)                                                      |
-| `--no-skip-seen`                 | Ignore `.rom-newsletter/seen_urls.json`                                                                            |
-| `--history-file PATH`            | Custom seen-URL ledger                                                                                             |
-| `--sources PATH`                 | `sources.json` (default: `<repo>/sources.json`)                                                                    |
-| `--topic PATH`                   | Topic profile JSON (default: env `ROM_NEWSLETTER_TOPIC` or `<repo>/topic.json`; if missing, built-in ROM defaults) |
-| `--theme-min-score N`            | Non-arXiv hits need theme score ≥ N to keep (default `2`; `0` = rank/cap only)                                     |
-| `--theme-floor-non-arxiv`        | Soft floor for non-arXiv count after filtering (default 5); backfill uses `--theme-backfill-min-score`             |
-| `--theme-backfill-min-score`     | Minimum theme score for backfill rows (default 1; avoids score-0 filler)                                           |
-| `--max-non-arxiv-hits`           | Cap non-arXiv hits after ranking (default 48)                                                                      |
-| `--refine`                       | Second LLM pass on citations                                                                                       |
-| `--output-dir`, `--template-dir` | Paths                                                                                                              |
-
-
-Outputs (for `--date 2025-03-20`):
-
-- `dist/newsletter-2025-03-20.html`
-- `dist/newsletter-2025-03-20.json`
-- `dist/newsletter-2025-03-20-search.json` — full discovery audit (window, per-source counts, `**theme_filter`** stats + scored samples, merged URLs)
-- `.rom-newsletter/seen_urls.json` — updated after each successful run (unless `--dry-run-search`). Commit this file if you want deduplication shared across machines; add `.rom-newsletter/` to `.gitignore` if you prefer a local-only ledger.
-
-## Performance
-
-Runs can take **many minutes** when discovery is heavy (arXiv retries, many RSS feeds, newsroom article fetches) or when the **compose** step receives a **large excerpt bundle** (especially with `--no-skip-seen` or high `--arxiv-max`).
-
-### Tips with today’s CLI
-
-- `**--dry-run-search`** — Stops after writing `*-search.json` (no LLM). If this is already slow, time is going to **arXiv / RSS / newsroom**; if it is fast but the full run is not, the bottleneck is mostly **compose** (and occasionally JSON repair).
-- **Seen-URL ledger** — Avoid `**--no-skip-seen`** for routine runs so fewer URLs reach the theme filter and the model (smaller prompts, faster generation).
-- **Discovery scope** — Use `**--no-arxiv`**, `**--no-rss**`, or `**--no-newsroom**` when you only need part of the pipeline.
-- **Caps** — Lower `**--arxiv-max`** and `**--max-non-arxiv-hits**` to shrink the prompt; raise them only when you need depth.
-- **arXiv** — Tuning `**ROM_NEWSLETTER_ARXIV_READ_TIMEOUT`** and `**ROM_NEWSLETTER_ARXIV_USER_AGENT**` (see table above) can reduce wall time when the API is slow or returning **429**.
-
-### Phase timings
-
-Each run logs wall-clock **milliseconds per phase** to **stderr**, for example:
-
-`rom-newsletter phase timings: arXiv=1200ms RSS=3400ms newsroom=8000ms compose=45000ms`
-
-Skipped phases show **0ms** (e.g. `**--no-rss`**). `**compose**` is included only on **full** runs (after the LLM); `**--dry-run-search`** omits it. The written `***-search.json**` includes a `**phase_timings_ms**` object for **discovery** only (arXiv, RSS, newsroom), since that file is produced before compose.
-
-### Future improvements (not implemented yet)
-
-#### Performance & reliability
-
-Ideas that would speed up or stabilize runs without changing the overall product shape:
-
-
-| Area            | Idea                                                                                                                                                                                               |
-| --------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **RSS**         | Fetch feeds **in parallel** (thread pool or async) instead of strictly sequential HTTP requests; optional per-feed **ETag** / `**If-Modified-Since`** caching to skip unchanged feeds.             |
-| **Newsroom**    | Fetch multiple `**newsroom_listing`** sources concurrently where safe; cap the number of **article HTML** fetches used only for date resolution, or reuse dates from sitemap/listing when present. |
-| **Compose**     | **Truncate or cap** per-hit excerpt length and/or total characters sent to the chat model; optionally **rank** hits and send only the top *N* per category to stay under a token budget.           |
-| **Compose**     | **Streaming** responses where the API supports it (faster time-to-first-token; less impact on total generation time).                                                                              |
-| **Compose**     | Optional **smaller/faster default model** for weekly cron when quality tradeoffs are acceptable; keep `**--model`** for manual "best" runs.                                                        |
-| **Reliability** | Narrower **JSON schema** or constrained decoding to reduce **second-call JSON healing** in `compose`.                                                                                              |
-
-
-#### Content additions
-
-
-| Area                               | Idea                                                                                                                                                                                                                                                                                         |
-| ---------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **Events calendar**                | A dedicated section on upcoming conferences, workshops, and seminars relevant to the topics (e.g. MORe, USACM, ECCOMAS, WCCM, SIAM, etc.). Could be sourced from a curated list of event-feed URLs (WikiCFP RSS, conference sites) and filtered by submission/attendance deadline proximity. |
-| **Open-source releases**           | Track new GitHub releases and PyPI packages in the ecosystem (pyMOR, libROM, SciML.ai, PhysicsNeMo, etc.) by monitoring GitHub release RSS feeds for a curated set of repos.                                                                                                                 |
-| **Video content spotlight**        | Surface new lecture uploads, recorded conference talks, and tutorial videos from key channels (Steve Brunton, etc.). YouTube exposes per-channel RSS feeds that could be treated like any other RSS source.                                                                                  |
-| **Preprint → publication tracker** | When a paper that appeared in a prior issue is formally published in a journal, surface it again with the DOI. Implementable by periodically polling Semantic Scholar or CrossRef for the arXiv IDs stored in the seen-URL ledger.                                                           |
-
-
-#### Editorial quality
-
-
-| Area                           | Idea                                                                                                                                                                                                                                                 |
-| ------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **Emerging themes clustering** | Before the compose step, automatically cluster papers into sub-themes (e.g. "operator learning", "physics-informed surrogates for fluids", "ROM for structural mechanics") so the LLM can produce a more coherent narrative rather than a flat list. |
-| **Executive summary / TL;DR**  | A 3–4 sentence paragraph synthesizing the week's most significant development across research and industry, placed at the very top of the email.                                                                                                     |
-| **Social signal boost**        | Weight arXiv hits by Semantic Scholar citation velocity or social-mention counts in the window so genuinely "buzzy" preprints rank above routine submissions.                                                                                        |
-
-
-#### Product & infrastructure
-
-
-| Area                               | Idea                                                                                                                                              |
-| ---------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **Newsletter archive with search** | Incrementally build a static HTML index (or JSON manifest) over all past `dist/` outputs so past issues are keyword-searchable without a backend. |
-| **Source health monitoring**       | Track per-source hit counts across runs and emit a warning when a source has been silent for N consecutive weeks (dead feed, broken scraper).     |
-| **Reader feedback loop**           | Buttondown exposes click data via API. Aggregate which story types attract clicks over time and use that signal to adjust theme scoring weights.  |
-
-
-## Scheduled runs (GitHub Actions + Buttondown)
-
-The workflow `[.github/workflows/weekly-newsletter.yml](.github/workflows/weekly-newsletter.yml)` runs **every Monday 14:00 UTC** (adjust the `cron` expression if you want a different time or timezone). It:
-
-1. Sets `**WEEK_END`** to the **previous Sunday** in UTC (`date -u -d 'last Sunday'`), matching `rom-newsletter --date` as the **end** of the inclusive UTC window (`[dates.py](src/rom_newsletter/dates.py)` behavior).
-2. Runs `rom-newsletter --date "$WEEK_END" --no-skip-seen --output-dir dist`.
-3. Publishes `dist/newsletter-<WEEK_END>.html` to [Buttondown](https://buttondown.com/) via `rom-newsletter-buttondown`, using the `**subject`** from `dist/newsletter-<WEEK_END>.json`.
-
-### GitHub Actions setup
-
-1. **Commit the workflow** — Push `[.github/workflows/weekly-newsletter.yml](.github/workflows/weekly-newsletter.yml)` to your GitHub repo’s **default** branch so Actions can discover it.
-2. **Enable workflows** — In the repo on GitHub: **Settings** → **Actions** → **General**. Under **Actions permissions**, allow Actions to run (adjust **Fork** pull request settings if you use forks).
-3. **Add repository secrets** — **Settings** → **Secrets and variables** → **Actions** → **New repository secret** for each row below:
-
-
-| Secret               | Purpose                                                                                                                               |
-| -------------------- | ------------------------------------------------------------------------------------------------------------------------------------- |
-| `LLM_BASE_URL`       | Same as local `.env` (e.g. OpenRouter base URL).                                                                                      |
-| `LLM_API_KEY`        | Same as local `.env`; required for compose.                                                                                           |
-| `LLM_MODEL`          | Default model id for the workflow run.                                                                                                |
-| `BUTTONDOWN_API_KEY` | Buttondown API token ([API keys](https://buttondown.com/keys)); creates the email with `status: about_to_send` (send to subscribers). |
-
-
-1. **Config in the repo** — Keep `[sources.json](sources.json)` at the repo root (the workflow does not pass `--sources`). Commit `templates/` and anything else `rom-newsletter` needs the same way you do locally.
-2. **Optional: change schedule** — Edit the `cron` line in the workflow file. Times are **UTC**; GitHub does not guarantee execution to the exact minute.
-3. **Test early** — **Actions** → **Weekly newsletter** → **Run workflow**. Optionally set **week end date** to a `YYYY-MM-DD` you have already validated locally; leave it empty to use “last Sunday UTC” (same as the scheduled run).
-4. **Scheduled runs caveat** — GitHub may **disable** scheduled workflows on repositories with **no activity** for a long time; the schedule is **best-effort** and can drift slightly.
-5. **arXiv in CI (optional)** — If `export.arxiv.org` returns **429** from GitHub’s shared IPs, add a repository **variable** `**ROM_NEWSLETTER_ARXIV_USER_AGENT`** (Settings → Secrets and variables → Actions → Variables) with a unique string (your repo URL or contact). The weekly workflow passes it into the generate step automatically.
-
-**Manual run (after setup):** Actions → *Weekly newsletter* → *Run workflow* → optional **week end date** ISO `YYYY-MM-DD` (overrides the default “last Sunday UTC”).
-
-**Upload HTML locally after a normal run** (requires `BUTTONDOWN_API_KEY` in `.env` or the environment):
-
-```bash
-rom-newsletter-buttondown --output-dir dist --date 2026-03-20
-```
-
-Use `**--draft**` to create a Buttondown **draft** instead of sending. `**--dry-run`** loads files and prints subject/body size only.
-
-By default the publish script **updates in place**: if an email for the week already exists (matched by the `Week of <date>` label rendered in the HTML body), it PATCHes that email's subject and body so the web archive reflects the regenerated issue — it does **not** create a new email and does **not** re-send to subscribers. Only when no prior email exists does it create one. Pass `**--no-dedupe`** to always create a new email, or when publishing a template that lacks the week label (in-place update is skipped automatically if the label isn't in the HTML).
-
-Optional env `**BUTTONDOWN_API_VERSION**` (e.g. `2026-04-01`) is passed as `X-API-Version` if you pin API behavior; see [Buttondown API versioning](https://docs.buttondown.com/api-versioning).
-
-The publish step sends `**X-Buttondown-Live-Dangerously: true**` so the first programmatic send to subscribers under newer API versions succeeds, and so edge-case HTML is accepted (see [creating an email](https://docs.buttondown.com/api-emails-create)).
-
-When the run succeeds, `**dist/**` is uploaded as a workflow artifact. If **Generate newsletter** fails before writing files, there may be nothing to upload; the workflow is configured to **ignore** a missing `dist/` folder so the job does not fail twice.
-
-### Troubleshooting workflow failures
-
-
-| Symptom                                 | What to check                                                                                                                                                                                                                                                                                                                                                                                               |
-| --------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **Process completed with exit code 1**  | Open the **Generate newsletter** step log (that is usually what failed). Confirm `**LLM_BASE_URL`**, `**LLM_API_KEY**`, and `**LLM_MODEL**` are set under Actions secrets and match a working local `.env`. Run the same command locally with the same `--date`.                                                                                                                                            |
-| **arXiv / API errors**                  | **503**, **429** (rate limit), or **read timeouts** from `export.arxiv.org`: the client retries with backoff, `**Retry-After`**, a descriptive **User-Agent**, and longer waits for **429**. Set `**ROM_NEWSLETTER_ARXIV_USER_AGENT`** to a unique string for your project in CI. Set `**ROM_NEWSLETTER_ARXIV_READ_TIMEOUT**` if reads are slow. Use `**--no-arxiv**` in the workflow if arXiv stays flaky. |
-| **Node.js 20 deprecation annotations**  | The workflow sets `**FORCE_JAVASCRIPT_ACTIONS_TO_NODE24`** and pins newer action versions; warnings can still appear until GitHub changes defaults—see the [GitHub changelog](https://github.blog/changelog/2025-09-19-deprecation-of-node-20-on-github-actions-runners/).                                                                                                                                  |
-| **No artifact / “No files were found”** | Normal if generation failed: `**dist/`** was never created. Fix the failing step first; the artifact upload will not fail the job when `dist/` is absent.                                                                                                                                                                                                                                                   |
-| **Buttondown 503 / HTML error page**    | Transient outage on Buttondown’s side (response may be Heroku “Application Error” HTML). `rom-newsletter-buttondown` **retries** 429/502/503/504; **re-run the workflow** later or publish locally when `api.buttondown.com` is healthy.                                                                                                                                                                    |
-
-
-## Sources config (`sources.json`)
-
-The config file is `**[sources.json](sources.json)`** at the repo root unless you pass `**--sources**`.
-
-- `**version**`: must be `1`.
-- `**sources**`: array of entries with `**label**` and `**url**` (HTTP(S)); optional `**id**`, `**category**` (e.g. `papers` / `industry`), `**kind**` (`arxiv`  `nvidia`  `siemens`  `ansys`  `generic` or omitted to infer from the URL host), `**rss**`, `**feed_hosts**` (extra hostnames allowed for RSS item links when they differ from the feed host), and `**newsroom_listing**` (boolean: built-in newsroom discovery; requires a supported `**id**` — see `[newsroom_listings.py](src/rom_newsletter/newsroom_listings.py)` and bullet 3 above).
-
-Optional `**[sources.schema.json](sources.schema.json)**` documents the shape for editors that support JSON Schema.
-
-## RSS feeds
-
-Declare `**rss**` (and optional `**feed_hosts**`) on the matching entry in `**sources.json**`. The CLI merges **per-source RSS first**, then a small built-in default list in code, **deduplicating by feed URL**.
-
-The **feed URL’s hostname** must match a host from your sources list, **unless** you add `**feed_hosts`**: an array of normalized hostnames allowed for that feed (needed when item links use a different domain than the feed).
-
-Example (Synopsys feed with off-domain item links — same pattern as the `**synopsys-simulation-rss**` entry in `[sources.json](sources.json)`):
-
-```json
-{
-  "id": "synopsys-simulation-rss",
-  "label": "Synopsys (Simulation & Analysis RSS)",
-  "url": "https://news.synopsys.com/",
-  "category": "industry",
-  "kind": "generic",
-  "rss": "https://news.synopsys.com/home?pagetemplate=rss&category=778",
-  "feed_hosts": ["news.synopsys.com"]
-}
-```
-
-## Limitations
-
-- Treat generated text as a **draft**; verify claims from primary sources.
+Tests cover pagination and truncation, inclusive date windows, relevance and prompt budgets, URL identity, citation provenance after refinement, output integrity, publication history, draft-to-send transitions, reruns, deleted IDs, and accepted/unconfirmed API timeouts.
+
+## Troubleshooting
+
+| Symptom | Action |
+| --- | --- |
+| arXiv 429/503/timeouts | Use an identifying User-Agent, wait for the service to recover, or adjust the read timeout. API reads already retry with backoff. |
+| Incomplete arXiv coverage | Inspect the search audit; increase the candidate cap, narrow the query, or explicitly allow partial coverage. |
+| Citation validation failure | Inspect the model draft/excerpts and revise the prompt/model. Unsupported links are not silently removed before sending. |
+| Hash/manifest mismatch | Regenerate HTML and JSON together; rerun publishing dry-run. |
+| Unconfirmed create/send | Inspect the saved email ID and pending state in the workflow artifact and Buttondown. A subsequent run can recover if the email becomes visible or its send is confirmed. Clear a pending flag only after independently confirming that the corresponding operation was not accepted; preserve the email ID. |
+| Deleted email ID or multiple matching issues | Resolve the Buttondown records explicitly; the publisher will not create a replacement automatically. |
+| Missing state cache | Restore `.rom-newsletter/*.json` from the latest artifact to preserve story history; issue identity can also be recovered from Buttondown metadata. |
+| Slow generation | Compare phase timings; reduce shortlist/excerpt budgets, or use discovery-only mode to isolate network delays. |
+
+## Future work — not implemented
+
+These ideas extend the completed retrieval → ranking → citation validation → publication milestone.
+
+| Area | Proposed work |
+| --- | --- |
+| **Structured paper spotlight** | Problem, method, baseline, reported accuracy/speedup, limitations, and code availability. Use “not reported” when evidence is missing. |
+| **Engineering implications** | Explain effects on simulation workflows, training-data needs, geometry generalization, and deployment; separate editorial interpretation from source claims. |
+| **Evidence labels** | Distinguish preprints, vendor announcements, reproducible benchmarks, and customer case studies; attribute vendor claims explicitly. |
+| **Open-source releases** | Curated release coverage for ROM/SciML tools such as pyMOR, libROM, SciML, and PhysicsNeMo. |
+| **Searchable archive** | Static issue index with topic/company/method filters and keyword search. |
+| **Events calendar** | Relevant workshops, conferences, seminars, and submission deadlines from curated sources. |
+| **Video spotlight** | Selected lecture/tutorial uploads and recorded conference talks. |
+| **Publication tracking** | Revisit previously covered preprints when journal publication/DOI metadata appears. |
+| **Theme clustering and diversity** | Cluster candidates before composition, avoid repetitive coverage, and rank for novelty as well as relevance. |
+| **Executive summary** | Optional short synthesis of the week's strongest research and industry developments. |
+| **Source health monitoring** | Historical source hit/error counts; alerts for stale feeds or broken parsers. |
+| **Reader feedback** | Use aggregate click/feedback signals to guide editorial selection without allowing popularity to override relevance or evidence quality. |
+| **RSS performance and caching** | Parallel feed requests and conditional HTTP caching; cache newsroom article/date lookups too. Newsroom source concurrency already exists. |
+| **Composition efficiency** | Provider-supported constrained JSON output, explicit token budgeting, usage/cost reporting, and model comparisons on a fixed evaluation set. Character/excerpt budgets already exist. |
+| **Editorial evaluation** | Human-labeled examples for relevance, claim support, usefulness, and coverage; track quality across prompt/model changes. |
+| **Durable shared state** | Replace best-effort CI cache with durable storage and stronger coordination across independent publishers. |
+| **Repository onboarding** | A checked-in example issue and preview image, contribution guide, and additional packaging validation for distribution beyond an editable checkout. |
 
 ## Project layout
 
-- `src/rom_newsletter/` — CLI, arXiv, RSS, optional newsroom listings, compose, render, `[buttondown_publish](src/rom_newsletter/buttondown_publish.py)`
-- `.github/workflows/weekly-newsletter.yml` — Monday cron + Buttondown publish
-- `templates/newsletter.html.j2` — HTML layout
-- `sources.json` — categorized sources and RSS feeds (required unless `--sources` points elsewhere)
-- `sources.schema.json` — optional JSON Schema for `sources.json`
+- `src/rom_newsletter/` — CLI, discovery, relevance, composition, rendering, history, publishing.
+- `templates/newsletter.html.j2` — industry-first email layout.
+- `topic.json`, `sources.json` and their schemas — topic/source configuration.
+- `tests/` — offline fixtures and regression checks.
+- `.github/workflows/` — weekly publication and PR checks.
+- `uv.lock` — reproducible dependencies.
+- `docs/` — custom topic, newsroom, and agent conventions.
 
+Generated prose is a draft based on source excerpts. Verify important technical or commercial claims in the primary source before relying on them.
