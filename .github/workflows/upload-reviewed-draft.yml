@@ -1,0 +1,70 @@
+name: Upload reviewed September 27 draft
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "issues/2026-09-27/**"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: rom-newsletter-publication
+  cancel-in-progress: false
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
+jobs:
+  upload-draft:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v5
+      - uses: astral-sh/setup-uv@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.13"
+      - name: Restore publication state
+        uses: actions/cache/restore@v4
+        with:
+          path: .rom-newsletter
+          key: rom-newsletter-state-v1-${{ github.run_id }}-${{ github.run_attempt }}
+          restore-keys: rom-newsletter-state-v1-
+      - name: Install locked dependencies
+        run: uv sync --frozen --extra dev
+      - name: Regression checks
+        run: uv run --frozen pytest -q
+      - name: Validate reviewed issue
+        run: uv run --frozen rom-newsletter-buttondown --output-dir issues/2026-09-27 --date 2026-09-27 --dry-run
+      - name: Upload to Buttondown as draft only
+        env:
+          BUTTONDOWN_API_KEY: ${{ secrets.BUTTONDOWN_API_KEY }}
+        run: |
+          uv run --frozen rom-newsletter-buttondown --output-dir issues/2026-09-27 --date 2026-09-27 --draft
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          receipt = json.loads(Path(".rom-newsletter/publications.json").read_text())["issues"]["rom-sciml-twins:2026-09-27"]
+          assert receipt["status"] == "draft", "Buttondown did not confirm draft status"
+          assert not receipt.get("send_pending"), "Unexpected pending send"
+          with open(__import__("os").environ["GITHUB_STEP_SUMMARY"], "a") as summary:
+              summary.write(f"Buttondown draft ID: `{receipt['email_id']}`\n\nStatus: **draft**. No email send requested.\n")
+          PY
+      - name: Save publication state
+        if: always()
+        uses: actions/cache/save@v4
+        with:
+          path: .rom-newsletter
+          key: rom-newsletter-state-v1-${{ github.run_id }}-${{ github.run_attempt }}
+      - uses: actions/upload-artifact@v6
+        if: always()
+        with:
+          name: reviewed-draft-2026-09-27
+          path: |
+            issues/2026-09-27/
+            .rom-newsletter/*.json
+          include-hidden-files: true
+          if-no-files-found: error

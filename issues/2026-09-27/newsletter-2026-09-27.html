@@ -1,0 +1,143 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Rail virtual twins and the practical limits of neural operators</title>
+  <style>
+    body { margin: 0; padding: 0; background-color: #f4f2ef; color: #1a1a1a; font-family: Georgia, 'Times New Roman', serif; font-size: 17px; line-height: 1.55; -webkit-text-size-adjust: 100%; }
+    .wrap { max-width: 640px; margin: 0 auto; padding: 24px 20px 48px; background-color: #ffffff; }
+    h2.major { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; font-size: 1.25rem; font-weight: 600; margin: 36px 0 12px; color: #111; letter-spacing: -0.02em; border-bottom: 2px solid #1c3d5c; padding-bottom: 8px; }
+    h2.major:first-of-type { margin-top: 0; }
+    .major-intro p { margin: 0 0 12px; }
+    .issue-label { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; font-size: 0.78rem; letter-spacing: 0.04em; text-transform: uppercase; color: #8a8578; margin: 0 0 18px; padding-bottom: 14px; border-bottom: 1px solid #efece6; }
+    h3.sub { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; font-size: 1.05rem; font-weight: 600; margin: 24px 0 8px; color: #1c3d5c; letter-spacing: -0.01em; }
+    .section-body { margin: 0 0 10px; }
+    .links { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; font-size: 0.9rem; margin: 0 0 20px; padding-left: 1.1em; color: #333; }
+    .links a { color: #0b5fa8; text-decoration: underline; }
+    footer { margin-top: 40px; padding-top: 20px; border-top: 1px solid #e5e2dc; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; font-size: 0.75rem; color: #777; }
+  </style>
+</head>
+<body>
+  <!-- Subject and issue date come from the newsletter platform; body starts at section headings. -->
+  <div class="wrap">
+    <p style="font-family:Arial,sans-serif;font-size:12px;font-weight:bold;color:#8a5a13;letter-spacing:0.08em;">DRAFT PREVIEW · NOT SENT</p>
+    <h1 style="font-family:Arial,sans-serif;font-size:28px;line-height:1.2;margin:8px 0 12px;">Rail virtual twins and the practical limits of neural operators</h1>
+    <p style="font-family:Arial,sans-serif;font-size:14px;color:#666;margin:0 0 20px;">ROM · Scientific machine learning · Digital twins<br>September 21–27, 2026 · Selected primary-source coverage</p>
+
+    <h2 class="major">Industry News</h2>
+    <div class="major-intro">
+
+      <p>One verified announcement anchors this week’s industry section: virtual twins for transport infrastructure. Coverage here is selective; older announcements and undated product pages are excluded.</p>
+
+    </div>
+
+    <h3 class="sub">SYSTRA and Dassault Systèmes target integrated rail virtual twins</h3>
+
+    <p class="section-body">September 24 · Company announcement</p>
+
+    <p class="section-body">At InnoTrans 2026, SYSTRA and Dassault Systèmes announced a collaboration on virtual twins for rail and transport infrastructure. They describe integrating models, operational data, and engineering expertise to support option assessment and decisions throughout an asset’s lifecycle, using Dassault Systèmes’ 3DEXPERIENCE platform.</p>
+
+    <p class="section-body">Editorial implication: the emphasis is on connecting engineering analyses with infrastructure decisions and stakeholder collaboration. This is a partnership announcement, not a published ROM benchmark; it provides no quantified simulation speedup or independently validated return on investment.</p>
+
+
+    <ul class="links">
+
+      <li><a href="https://www.3ds.com/newsroom/press-releases/systra-and-dassault-systemes-enter-technological-collaboration-around-new-generation-virtual-twins-transport-infrastructures">Read the September 24 company announcement</a></li>
+
+    </ul>
+
+
+
+    <h2 class="major">Research Papers</h2>
+    <div class="major-intro">
+
+      <p>Five new preprints examine the cost of surrogate prediction, equation-based nonlinear reduction, and learned models for mechanics and control. These are author-reported research results, not independent validations.</p>
+
+    </div>
+
+    <h3 class="sub">When neural operators beat classical solvers—and when they do not</h3>
+
+    <p class="section-body">September 21 · Daniel Zhengyu Huang and Andrew M. Stuart · Preprint</p>
+
+    <p class="section-body">The authors compare neural operators with numerical solvers chosen to suit each benchmark problem. Even after treating data generation and training as fully amortized, learned surrogates do not win everywhere. Their strongest results are at less demanding accuracy targets; advantages also depend on whether the task avoids iterative computation or predicts a limited output instead of an entire field. As accuracy requirements become stricter, classical solvers become more competitive.</p>
+
+    <p class="section-body">Editorial implication: compare end-to-end cost at your required error level. A fast forward pass alone is not enough to justify replacing a solver, especially when training costs have not yet been recovered.</p>
+
+
+    <ul class="links">
+
+      <li><a href="https://arxiv.org/abs/2609.24021">Cost-Accuracy Trade-offs: Neural Operator vs Classical Numerical Solver</a></li>
+
+    </ul>
+
+
+    <h3 class="sub">Nonlinear ROMs that compress the governing operators</h3>
+
+    <p class="section-body">September 21 · Anna Ivagnes, Giovanni Stabile and Gianluigi Rozza · Preprint</p>
+
+    <p class="section-body">This work extends nonlinear reduction beyond compressing the solution field. It learns compact nonlinear representations of the discretized operators while keeping a reduced equation system. Convolution-based representations capture spatial structure; continuous convolutions handle nonzero entries of large sparse operators, and radial-basis interpolation predicts reduced operators at new parameter values. The abstract reports experiments on three parametrized problems.</p>
+
+    <p class="section-body">Editorial implication: this is worth examining when a linear reduced basis grows too large for an efficient online solve. The abstract does not establish a universal speedup or accuracy advantage; those need checking against the detailed benchmarks.</p>
+
+
+    <ul class="links">
+
+      <li><a href="https://arxiv.org/abs/2609.24300">A Nonlinear Physics-based Reduced Order Model with Convolutional-based Operator Compression</a></li>
+
+    </ul>
+
+
+    <h3 class="sub">A wheel-loader V-cycle controller built from reduced and learned models</h3>
+
+    <p class="section-body">September 22 · Armin Abdolmohammadi and colleagues · Preprint; simulation study</p>
+
+    <p class="section-body">A hierarchical controller combines a reduced articulated-vehicle model for maneuver planning with separate learned Koopman models for forward and reverse motion. Training data come from high-fidelity Algoryx Dynamics simulations, and the learned dynamics feed a model predictive controller. The authors report a 50 ms control loop and successful trajectory tracking in simulation.</p>
+
+    <p class="section-body">Editorial implication: the paper illustrates a practical division of labor between geometric planning, high-fidelity simulation, and inexpensive predictive control. The reported validation is simulation-based; the abstract does not demonstrate field deployment or real-machine robustness.</p>
+
+
+    <ul class="links">
+
+      <li><a href="https://arxiv.org/abs/2609.26580">Wheel-loader V-Cycle Automation with Deep Koopman MPC</a></li>
+
+    </ul>
+
+
+    <h3 class="sub">Adapting a mechanics surrogate outside its original training range</h3>
+
+    <p class="section-body">September 27 · Prashant K. Jha and colleagues · Preprint</p>
+
+    <p class="section-body">In two simulated magnetic soft-material systems, a fixed neural operator becomes less accurate as stiffness and loading depart from training conditions. The researchers periodically update the operator using complete loading paths from selected finite-element evaluations. They report that 16 additional paths recover much of the lost accuracy and improve control-command selection under the same FE budget. However, the error estimator still sometimes approves poor predictions and rejects good ones.</p>
+
+    <p class="section-body">Editorial implication: improving surrogate accuracy and deciding whether a particular prediction is trustworthy are separate engineering problems. Adaptive retraining should be evaluated together with the acceptance or fallback policy.</p>
+
+
+    <ul class="links">
+
+      <li><a href="https://arxiv.org/abs/2609.33978">Adapting neural operators for mechanics decisions under changing operating conditions</a></li>
+
+    </ul>
+
+
+    <h3 class="sub">AFDONet: designing neural operators from a mathematical framework</h3>
+
+    <p class="section-body">September 27 · Zeyuan Song and Zheyu Jiang · Preprint</p>
+
+    <p class="section-body">AFDONet combines adaptive Fourier decomposition with a variational-autoencoder architecture for learning PDE solutions on smooth manifolds. The authors report favorable results on several benchmarks, including cases with steep gradients and non-Euclidean geometry, and connect the architecture to the underlying mathematical construction.</p>
+
+    <p class="section-body">Editorial implication: this offers an architectural alternative to purely empirical operator design. Claims of broad superiority or novelty should be treated as author claims until the baselines, datasets, computational budgets, and independent reproduction have been examined.</p>
+
+
+    <ul class="links">
+
+      <li><a href="https://arxiv.org/abs/2609.33715">Theory Guided and Interpretable Neural Operator Design for Partial Differential Equation Learning</a></li>
+
+    </ul>
+
+
+
+    <footer>Prepared as a standalone review draft from dated primary sources. Research summaries are based on abstracts; editorial implications are interpretations. Draft for review; no email send is authorized.</footer>
+  </div>
+</body>
+</html>

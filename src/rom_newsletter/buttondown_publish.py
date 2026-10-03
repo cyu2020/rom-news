@@ -122,6 +122,8 @@ def publish_issue(
             email = _find_email(
                 client, issue_key, f"Week of {week_end}" if issue_key.startswith("rom-sciml-twins:") else None
             )
+        if draft and email is not None and email.get("status") != "draft":
+            raise RuntimeError("Draft-only upload requires a draft email; existing issue is already queued or published")
         if email is None:
             if receipt.get("create_pending"):
                 raise RuntimeError(

@@ -1,0 +1,53 @@
+{
+  "coverage": "Selected primary sources manually verified for September 21\u201327, 2026; summaries based on abstracts and company announcement.",
+  "composition_inputs": [
+    {
+      "url": "https://www.3ds.com/newsroom/press-releases/systra-and-dassault-systemes-enter-technological-collaboration-around-new-generation-virtual-twins-transport-infrastructures",
+      "title": "Read the September 24 company announcement",
+      "content": "September 24 \u00b7 Company announcement\n\nAt InnoTrans 2026, SYSTRA and Dassault Syst\u00e8mes announced a collaboration on virtual twins for rail and transport infrastructure. They describe integrating models, operational data, and engineering expertise to support option assessment and decisions throughout an asset\u2019s lifecycle, using Dassault Syst\u00e8mes\u2019 3DEXPERIENCE platform.\n\nEditorial implication: the emphasis is on connecting engineering analyses with infrastructure decisions and stakeholder collaboration. This is a partnership announcement, not a published ROM benchmark; it provides no quantified simulation speedup or independently validated return on investment.",
+      "keyword": "verified-primary-source-preview",
+      "raw_score": null,
+      "source_category": "industry"
+    },
+    {
+      "url": "https://arxiv.org/abs/2609.24021",
+      "title": "Cost-Accuracy Trade-offs: Neural Operator vs Classical Numerical Solver",
+      "content": "September 21 \u00b7 Daniel Zhengyu Huang and Andrew M. Stuart \u00b7 Preprint\n\nThe authors compare neural operators with numerical solvers chosen to suit each benchmark problem. Even after treating data generation and training as fully amortized, learned surrogates do not win everywhere. Their strongest results are at less demanding accuracy targets; advantages also depend on whether the task avoids iterative computation or predicts a limited output instead of an entire field. As accuracy requirements become stricter, classical solvers become more competitive.\n\nEditorial implication: compare end-to-end cost at your required error level. A fast forward pass alone is not enough to justify replacing a solver, especially when training costs have not yet been recovered.",
+      "keyword": "verified-primary-source-preview",
+      "raw_score": null,
+      "source_category": "papers"
+    },
+    {
+      "url": "https://arxiv.org/abs/2609.24300",
+      "title": "A Nonlinear Physics-based Reduced Order Model with Convolutional-based Operator Compression",
+      "content": "September 21 \u00b7 Anna Ivagnes, Giovanni Stabile and Gianluigi Rozza \u00b7 Preprint\n\nThis work extends nonlinear reduction beyond compressing the solution field. It learns compact nonlinear representations of the discretized operators while keeping a reduced equation system. Convolution-based representations capture spatial structure; continuous convolutions handle nonzero entries of large sparse operators, and radial-basis interpolation predicts reduced operators at new parameter values. The abstract reports experiments on three parametrized problems.\n\nEditorial implication: this is worth examining when a linear reduced basis grows too large for an efficient online solve. The abstract does not establish a universal speedup or accuracy advantage; those need checking against the detailed benchmarks.",
+      "keyword": "verified-primary-source-preview",
+      "raw_score": null,
+      "source_category": "papers"
+    },
+    {
+      "url": "https://arxiv.org/abs/2609.26580",
+      "title": "Wheel-loader V-Cycle Automation with Deep Koopman MPC",
+      "content": "September 22 \u00b7 Armin Abdolmohammadi and colleagues \u00b7 Preprint; simulation study\n\nA hierarchical controller combines a reduced articulated-vehicle model for maneuver planning with separate learned Koopman models for forward and reverse motion. Training data come from high-fidelity Algoryx Dynamics simulations, and the learned dynamics feed a model predictive controller. The authors report a 50 ms control loop and successful trajectory tracking in simulation.\n\nEditorial implication: the paper illustrates a practical division of labor between geometric planning, high-fidelity simulation, and inexpensive predictive control. The reported validation is simulation-based; the abstract does not demonstrate field deployment or real-machine robustness.",
+      "keyword": "verified-primary-source-preview",
+      "raw_score": null,
+      "source_category": "papers"
+    },
+    {
+      "url": "https://arxiv.org/abs/2609.33978",
+      "title": "Adapting neural operators for mechanics decisions under changing operating conditions",
+      "content": "September 27 \u00b7 Prashant K. Jha and colleagues \u00b7 Preprint\n\nIn two simulated magnetic soft-material systems, a fixed neural operator becomes less accurate as stiffness and loading depart from training conditions. The researchers periodically update the operator using complete loading paths from selected finite-element evaluations. They report that 16 additional paths recover much of the lost accuracy and improve control-command selection under the same FE budget. However, the error estimator still sometimes approves poor predictions and rejects good ones.\n\nEditorial implication: improving surrogate accuracy and deciding whether a particular prediction is trustworthy are separate engineering problems. Adaptive retraining should be evaluated together with the acceptance or fallback policy.",
+      "keyword": "verified-primary-source-preview",
+      "raw_score": null,
+      "source_category": "papers"
+    },
+    {
+      "url": "https://arxiv.org/abs/2609.33715",
+      "title": "Theory Guided and Interpretable Neural Operator Design for Partial Differential Equation Learning",
+      "content": "September 27 \u00b7 Zeyuan Song and Zheyu Jiang \u00b7 Preprint\n\nAFDONet combines adaptive Fourier decomposition with a variational-autoencoder architecture for learning PDE solutions on smooth manifolds. The authors report favorable results on several benchmarks, including cases with steep gradients and non-Euclidean geometry, and connect the architecture to the underlying mathematical construction.\n\nEditorial implication: this offers an architectural alternative to purely empirical operator design. Claims of broad superiority or novelty should be treated as author claims until the baselines, datasets, computational budgets, and independent reproduction have been examined.",
+      "keyword": "verified-primary-source-preview",
+      "raw_score": null,
+      "source_category": "papers"
+    }
+  ]
+}

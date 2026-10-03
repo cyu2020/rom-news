@@ -1,0 +1,15 @@
+{
+  "issue_key": "rom-sciml-twins:2026-09-27",
+  "week_end": "2026-09-27",
+  "selected_urls": [
+    "https://arxiv.org/abs/2609.24021",
+    "https://arxiv.org/abs/2609.24300",
+    "https://arxiv.org/abs/2609.26580",
+    "https://arxiv.org/abs/2609.33715",
+    "https://arxiv.org/abs/2609.33978",
+    "https://www.3ds.com/newsroom/press-releases/systra-and-dassault-systemes-enter-technological-collaboration-around-new-generation-virtual-twins-transport-infrastructures"
+  ],
+  "history_file": ".rom-newsletter/published_urls.json",
+  "html_sha256": "74d44b9afd139b41a18a3a403eeac0fafeded8fdda335c5c86f76a3fee69e70e",
+  "json_sha256": "c3ec17df9f299d580dbbb59e874fd4885c025b5faae176d76ce2d2f3bf6482bb"
+}

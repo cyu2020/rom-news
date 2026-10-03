@@ -86,6 +86,16 @@ def test_draft_can_be_sent_later(tmp_path):
     assert fake.posts == fake.sends == 1
 
 
+@pytest.mark.parametrize("status", ["sent", "scheduled", "about_to_send", "in_flight"])
+def test_draft_only_upload_refuses_existing_published_or_queued_email(tmp_path, status):
+    fake = FakeButtondown()
+    fake.email = {"id": "em_test", "status": status, "metadata": {"rom_newsletter_issue": KEY}}
+    with pytest.raises(RuntimeError, match="Draft-only upload"):
+        publish(tmp_path, fake, draft=True)
+    assert all(method == "GET" for method, _ in fake.calls)
+    assert fake.posts == fake.sends == 0
+
+
 def test_accepted_create_timeout_is_reconciled_without_repost(tmp_path):
     fake = FakeButtondown()
     fake.create_timeout = True
