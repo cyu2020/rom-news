@@ -1,0 +1,162 @@
+name: Regenerate five past archives without sending
+on:
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: Generate drafts for review, or update existing archives from a reviewed run
+        type: choice
+        options: [generate, update_archives]
+        default: generate
+        required: true
+      source_run_id:
+        description: Successful generation run ID (required only for archive updates)
+        type: string
+        default: ""
+permissions:
+  contents: read
+  actions: read
+concurrency:
+  group: rom-newsletter-publication
+  cancel-in-progress: false
+jobs:
+  batch:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v5
+      - uses: astral-sh/setup-uv@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.13"
+      - run: uv sync --frozen --extra dev
+      - run: uv run --frozen pytest -q
+      - name: Generate five dated drafts
+        if: inputs.mode == 'generate'
+        env:
+          LLM_BASE_URL: ${{ secrets.LLM_BASE_URL }}
+          LLM_API_KEY: ${{ secrets.LLM_API_KEY }}
+          LLM_MODEL: ${{ secrets.LLM_MODEL }}
+          ROM_NEWSLETTER_ARXIV_USER_AGENT: ${{ vars.ROM_NEWSLETTER_ARXIV_USER_AGENT }}
+        run: |
+          uv run --frozen python - <<'PY'
+          import functools
+          import hashlib
+          import json
+          import time
+          from pathlib import Path
+          import httpx
+          from rom_newsletter import cli, newsroom_listings
+          from rom_newsletter.compose import NewsletterDraft
+          from rom_newsletter.render import render_html
+          from rom_newsletter.buttondown_publish import validate_issue_files
+          
+          def cached_read(func):
+              @functools.lru_cache(maxsize=512)
+              def read(*args):
+                  for attempt in range(3):
+                      try:
+                          return func(*args)
+                      except httpx.HTTPStatusError as exc:
+                          if exc.response.status_code not in {429, 502, 503, 504} or attempt == 2:
+                              raise
+                          delay = exc.response.headers.get("Retry-After", "10")
+                          time.sleep(min(30, max(2, int(delay) if delay.isdigit() else 10)))
+              return read
+          
+          # Reuse vendor listings across the five windows; dates are still filtered separately.
+          for name in ("_fetch_html", "_fetch_akselos_wp_posts", "_fetch_vinci_wp_posts", "_fetch_vinci_wp_news"):
+              setattr(newsroom_listings, name, cached_read(getattr(newsroom_listings, name)))
+          
+          profile = json.loads(Path("topic.json").read_text())
+          rules = "\nKeep vendor attribution precise: an article comparing companies does not mean all examples belong to its publisher. Attribute performance claims to the source; do not present vendor claims as independent validations. Do not invent the number of papers or announcements in section introductions."
+          profile["compose"]["editor_intro"] += rules
+          profile["compose"]["refine_system_extra"] += rules
+          topic_path = Path("dist/batch-topic.json")
+          topic_path.parent.mkdir(exist_ok=True)
+          topic_path.write_text(json.dumps(profile))
+          dates = ["2026-08-16","2026-08-23","2026-08-30","2026-09-06","2026-09-13"]
+          for stamp in dates:
+              cli.main(["--date", stamp, "--refine", "--no-skip-seen", "--topic", str(topic_path), "--output-dir", "dist"])
+              base = Path("dist") / ("newsletter-" + stamp)
+              draft_path = base.with_suffix(".json")
+              draft = NewsletterDraft.model_validate_json(draft_path.read_text())
+              paper_count = len({link.url for sub in draft.research_papers.subsections for link in sub.links})
+              draft.research_papers.intro = (
+                  f"This issue highlights {paper_count} selected preprints on reduced-order modeling, scientific machine learning, and digital twins."
+                  if paper_count else "No relevant research items were selected from the retrieved sources for this week."
+              )
+              if not draft.industry_news.subsections:
+                  draft.industry_news.intro = "No relevant industry items were selected from the retrieved sources for this week. Historical feed coverage may be incomplete."
+              draft_path.write_text(json.dumps(draft.model_dump(), indent=2, ensure_ascii=False))
+              base.with_suffix(".html").write_text(render_html(draft, week_label="Week of " + stamp))
+              manifest_path = Path(str(base) + "-selection.json")
+              manifest = json.loads(manifest_path.read_text())
+              for ext in ("html", "json"):
+                  manifest[ext + "_sha256"] = hashlib.sha256(base.with_suffix("." + ext).read_bytes()).hexdigest()
+              manifest_path.write_text(json.dumps(manifest, indent=2))
+              validate_issue_files(Path("dist"), stamp)
+              print(f"Validated {stamp}: {len(draft.industry_news.subsections)} industry sections; {paper_count} cited preprints.")
+          Path("dist/batch-targets.json").write_text(json.dumps({"2026-08-16":"em_4twvmn8b8p9ke8wje2jx2hfg0h","2026-08-23":"em_7nwda6ezvq90crkz9bczt64d4g","2026-08-30":"em_7d51ha319280gb0an2px6yyfxy","2026-09-06":"em_4jn1z28gpg99dvwyj0vw7snc4a","2026-09-13":"em_3mexwpmqqm81crg100eexx3rxj"}, indent=2))
+          PY
+      - name: Download reviewed generation artifact
+        if: inputs.mode == 'update_archives'
+        uses: actions/download-artifact@v5
+        with:
+          name: five-past-archive-drafts
+          path: dist
+          run-id: ${{ inputs.source_run_id }}
+          github-token: ${{ github.token }}
+      - name: Update five existing archives only
+        if: inputs.mode == 'update_archives'
+        env:
+          BUTTONDOWN_API_KEY: ${{ secrets.BUTTONDOWN_API_KEY }}
+        run: |
+          uv run --frozen python - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+          import httpx
+          from rom_newsletter.buttondown_publish import validate_issue_files, build_buttondown_body
+          targets = {"2026-08-16":"em_4twvmn8b8p9ke8wje2jx2hfg0h","2026-08-23":"em_7nwda6ezvq90crkz9bczt64d4g","2026-08-30":"em_7d51ha319280gb0an2px6yyfxy","2026-09-06":"em_4jn1z28gpg99dvwyj0vw7snc4a","2026-09-13":"em_3mexwpmqqm81crg100eexx3rxj"}
+          root = Path("dist")
+          prepared = []
+          # Validate every output and every pinned existing archive before making any writes.
+          with httpx.Client(headers={"Authorization": "Token " + os.environ["BUTTONDOWN_API_KEY"]}, timeout=120) as client:
+              for stamp, email_id in targets.items():
+                  html, subject, manifest = validate_issue_files(root, stamp)
+                  assert manifest["issue_key"] == "rom-sciml-twins:" + stamp
+                  url = "https://api.buttondown.com/v1/emails/" + email_id
+                  response = client.get(url)
+                  response.raise_for_status()
+                  before = response.json()
+                  assert before["id"] == email_id
+                  assert before["status"] == "sent", "Only existing sent archives can be updated"
+                  assert "Week of " + stamp in before["body"], "Archive week does not match pinned identity"
+                  prepared.append((stamp, url, before, {"subject": subject, "body": build_buttondown_body(html)}))
+              (root / "archive-before.json").write_text(json.dumps([{"week": stamp, "email": before} for stamp, _, before, _ in prepared], indent=2))
+              results = []
+              for stamp, url, before, payload in prepared:
+                  # PATCH subject/body only. No creation, send, publish, or status change.
+                  response = client.patch(url, json=payload)
+                  response.raise_for_status()
+                  check = client.get(url)
+                  check.raise_for_status()
+                  after = check.json()
+                  assert after["id"] == before["id"]
+                  assert after["status"] == before["status"] == "sent"
+                  assert after["publish_date"] == before["publish_date"]
+                  assert after["subject"] == payload["subject"] and after["body"] == payload["body"]
+                  results.append({"week": stamp, "id": after["id"], "subject": after["subject"], "archive_url": after["absolute_url"], "publish_date": after["publish_date"], "operation": "subject/body archive update; no send requested"})
+                  (root / "archive-results.json").write_text(json.dumps(results, indent=2))
+                  print("Updated archive only:", stamp, after["absolute_url"])
+              with open(os.environ["GITHUB_STEP_SUMMARY"], "a") as summary:
+                  summary.write("Updated five existing archive entries. No send requested.\n\n")
+                  for result in results:
+                      summary.write("- [" + result["week"] + "](" + result["archive_url"] + ")\n")
+          PY
+      - uses: actions/upload-artifact@v6
+        if: always()
+        with:
+          name: ${{ inputs.mode == 'generate' && 'five-past-archive-drafts' || 'five-past-archive-results' }}
+          path: dist/
+          if-no-files-found: ignore
