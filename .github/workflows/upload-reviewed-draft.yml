@@ -47,7 +47,7 @@ jobs:
           python - <<'PY'
           import json
           from pathlib import Path
-          receipt = json.loads(Path(".rom-newsletter/publications.json").read_text())["issues"]["rom-sciml-twins:2026-09-27"]
+          receipt = json.loads(Path(".rom-newsletter/publications.json").read_text())["issues"]["reviewed:rom-sciml-twins:2026-09-27"]
           assert receipt["status"] == "draft", "Buttondown did not confirm draft status"
           assert not receipt.get("send_pending"), "Unexpected pending send"
           with open(__import__("os").environ["GITHUB_STEP_SUMMARY"], "a") as summary:
