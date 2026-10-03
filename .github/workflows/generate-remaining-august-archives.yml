@@ -1,19 +1,9 @@
 name: Generate remaining August archive issues
 on:
   workflow_dispatch:
-    inputs:
-      mode:
-        description: Generate drafts for review, or update existing archives from a reviewed run
-        type: choice
-        options: [generate, update_archives]
-        default: generate
-        required: true
-      source_run_id:
-        description: Successful generation run ID (required only for archive updates)
-        type: string
-        default: ""
 permissions:
   contents: read
+  actions: read
   actions: read
 concurrency:
   group: rom-newsletter-publication
@@ -30,8 +20,13 @@ jobs:
           python-version: "3.13"
       - run: uv sync --frozen --extra dev
       - run: uv run --frozen pytest -q
-      - name: Generate five dated drafts
-        if: inputs.mode == 'generate'
+      - uses: actions/download-artifact@v5
+        with:
+          name: remaining-august-archive-drafts
+          path: dist
+          run-id: 37144868879
+          github-token: ${{ github.token }}
+      - name: Generate and validate remaining August 9 draft
         env:
           LLM_BASE_URL: ${{ secrets.LLM_BASE_URL }}
           LLM_API_KEY: ${{ secrets.LLM_API_KEY }}
@@ -68,15 +63,22 @@ jobs:
               setattr(newsroom_listings, name, cached_read(getattr(newsroom_listings, name)))
           
           profile = json.loads(Path("topic.json").read_text())
-          rules = "\nKeep vendor attribution precise: an article comparing companies does not mean all examples belong to its publisher. Attribute performance claims to the source; do not present vendor claims as independent validations. Do not invent the number of papers or announcements in section introductions."
+          rules = "\nEach subsection MUST have one to three source citations. Split subsections covering more than three sources. Never output a subsection without citations. Keep vendor attribution precise: an article comparing companies does not mean all examples belong to its publisher. Attribute performance claims to the source; do not present vendor claims as independent validations. Do not invent the number of papers or announcements in section introductions."
           profile["compose"]["editor_intro"] += rules
           profile["compose"]["refine_system_extra"] += rules
           topic_path = Path("dist/batch-topic.json")
           topic_path.parent.mkdir(exist_ok=True)
           topic_path.write_text(json.dumps(profile))
-          dates = ["2026-08-02","2026-08-09"]
+          dates = ["2026-08-09"]
           for stamp in dates:
-              cli.main(["--date", stamp, "--refine", "--no-skip-seen", "--topic", str(topic_path), "--output-dir", "dist"])
+              for attempt in range(3):
+                  try:
+                      cli.main(["--date", stamp, "--refine", "--no-skip-seen", "--topic", str(topic_path), "--output-dir", "dist"])
+                      break
+                  except ValueError as exc:
+                      if "citation" not in str(exc).lower() or attempt == 2:
+                          raise
+                      print("Citation validation rejected draft; retrying composition:", stamp, flush=True)
               base = Path("dist") / ("newsletter-" + stamp)
               draft_path = base.with_suffix(".json")
               draft = NewsletterDraft.model_validate_json(draft_path.read_text())
@@ -96,7 +98,7 @@ jobs:
               manifest_path.write_text(json.dumps(manifest, indent=2))
               validate_issue_files(Path("dist"), stamp)
               print(f"Validated {stamp}: {len(draft.industry_news.subsections)} industry sections; {paper_count} cited preprints.")
-          Path("dist/batch-targets.json").write_text(json.dumps({"2026-08-16":"em_4twvmn8b8p9ke8wje2jx2hfg0h","2026-08-23":"em_7nwda6ezvq90crkz9bczt64d4g","2026-08-30":"em_7d51ha319280gb0an2px6yyfxy","2026-09-06":"em_4jn1z28gpg99dvwyj0vw7snc4a","2026-09-13":"em_3mexwpmqqm81crg100eexx3rxj"}, indent=2))
+          validate_issue_files(Path("dist"), "2026-08-02")
           PY
       - uses: actions/upload-artifact@v6
         if: always()
