@@ -1,3 +1,4 @@
+import json
 from datetime import UTC, date
 from pathlib import Path
 from types import SimpleNamespace
@@ -33,6 +34,14 @@ def draft(url="https://arxiv.org/abs/2610.00002"):
             },
         }
     )
+
+
+def summary_json():
+    return json.dumps({
+        "subject": draft().subject,
+        "industry_intro": "No relevant industry stories were selected for this issue.",
+        "research_intro": draft().research_papers.intro,
+    })
 
 
 @pytest.mark.parametrize(
@@ -139,25 +148,138 @@ def test_empty_tracks_are_valid():
 
 
 @pytest.mark.parametrize("refine", [False, True])
-def test_compose_checks_final_model_output_including_refinement(refine):
-    good, bad = draft().model_dump_json(), draft("https://invented.test/paper").model_dump_json()
+@pytest.mark.parametrize("invalid_kind", ["missing", "too_many", "unknown", "cross_category"])
+def test_compose_repairs_invalid_citations_in_final_output(refine, invalid_kind):
+    good = draft().model_dump_json()
+    bad_draft = draft()
+    links = bad_draft.research_papers.subsections[0].links
+    if invalid_kind == "missing":
+        links.clear()
+    elif invalid_kind == "too_many":
+        links.extend(links * 3)
+    elif invalid_kind == "unknown":
+        links[0].url = "https://invented.test/paper"
+    else:
+        links[0].url = "https://vendor.test/story"
+    bad = bad_draft.model_dump_json()
     client = Mock()
     client.chat.completions.create.side_effect = [
         SimpleNamespace(choices=[SimpleNamespace(message=SimpleNamespace(content=text))])
-        for text in ([good, bad] if refine else [bad])
+        for text in (([good, bad, good] if refine else [bad, good]) + [summary_json()])
     ]
     research, industry = hits_to_split_bundle_text([paper()])
-    with pytest.raises(ValueError, match="not in selected inputs"):
+    result = compose_newsletter(
+        client,
+        model="test",
+        research_bundle=research,
+        industry_bundle=industry,
+        week_hint="Week",
+        topic=load_topic_for_run(ROOT, None),
+        input_hits=[paper(), SearchHit("https://vendor.test/story", "Story", "Text", "rss", source_category="industry")],
+        refine=refine,
+    )
+    assert result.subject == draft().subject
+    assert result.research_papers == draft().research_papers
+    repair_prompt = client.chat.completions.create.call_args_list[-2].kwargs["messages"][1]["content"]
+    assert "Validation error:" in repair_prompt and research in repair_prompt
+
+
+def test_citation_repair_is_bounded_and_rejects_invalid_or_malformed_responses():
+    bad = draft("https://invented.test/paper").model_dump_json()
+    responses = [bad, "not json", bad, bad]
+    client = Mock()
+    client.chat.completions.create.side_effect = [
+        SimpleNamespace(choices=[SimpleNamespace(message=SimpleNamespace(content=text))]) for text in responses
+    ]
+    with pytest.raises(ValueError, match="Citation repair failed after 3 attempts.*not in selected inputs"):
         compose_newsletter(
-            client,
-            model="test",
-            research_bundle=research,
-            industry_bundle=industry,
-            week_hint="Week",
-            topic=load_topic_for_run(ROOT, None),
-            input_hits=[paper()],
-            refine=refine,
+            client, model="test", research_bundle="research", industry_bundle="industry", week_hint="Week",
+            topic=load_topic_for_run(ROOT, None), input_hits=[paper()],
         )
+    assert client.chat.completions.create.call_count == 4
+
+
+@pytest.mark.parametrize("removal_stage", ["refine", "citation_repair"])
+def test_summary_only_sees_final_stories_after_removal(removal_stage):
+    initial = draft().model_dump()
+    initial["subject"] = "Crash CAE"
+    initial["research_papers"]["intro"] = "Thirteen preprints including crash CAE"
+    initial["research_papers"]["subsections"].append({
+        "title": "Crash CAE", "body": "Discarded candidate",
+        "links": [{"url": "https://arxiv.org/abs/2610.99999"}],
+    })
+    client = Mock()
+    client.chat.completions.create.side_effect = [
+        SimpleNamespace(choices=[SimpleNamespace(message=SimpleNamespace(content=text))])
+        for text in [json.dumps(initial), draft().model_dump_json(), summary_json()]
+    ]
+    result = compose_newsletter(
+        client, model="test", research_bundle="Candidate pool includes crash CAE",
+        industry_bundle="Unused vendor candidates", week_hint="Week",
+        topic=load_topic_for_run(ROOT, None), input_hits=[paper()], refine=removal_stage == "refine",
+    )
+    messages = client.chat.completions.create.call_args.kwargs["messages"]
+    final_stories = json.loads(messages[1]["content"].removeprefix("Final stories:\n"))
+    assert final_stories == {
+        "industry_news": {"subsections": []},
+        "research_papers": {"subsections": draft().research_papers.model_dump()["subsections"]},
+    }
+    assert "crash CAE" not in messages[1]["content"]
+    assert "counts of papers, sources, or stories" in messages[0]["content"]
+    assert result.subject == draft().subject
+    assert result.research_papers == draft().research_papers
+    assert result.industry_news.intro == "No relevant industry stories were selected for this issue."
+
+
+@pytest.mark.parametrize("invalid_summary", ["not json", "", "{}", json.dumps({
+    "subject": "x" * 90, "industry_intro": "Industry", "research_intro": "Research",
+}), json.dumps({
+    "subject": "Subject", "industry_intro": "Industry", "research_intro": "Research",
+    "research_papers": {"subsections": []},
+})])
+def test_summary_retries_invalid_responses_without_changing_stories(invalid_summary):
+    client = Mock()
+    client.chat.completions.create.side_effect = [
+        SimpleNamespace(choices=[SimpleNamespace(message=SimpleNamespace(content=text))])
+        for text in [draft().model_dump_json(), invalid_summary, summary_json()]
+    ]
+    result = compose_newsletter(
+        client, model="test", research_bundle="research", industry_bundle="", week_hint="Week",
+        topic=load_topic_for_run(ROOT, None), input_hits=[paper()],
+    )
+    assert result.research_papers == draft().research_papers
+    assert client.chat.completions.create.call_count == 3
+
+
+def test_summary_failure_is_bounded_without_returning_stale_metadata():
+    client = Mock()
+    client.chat.completions.create.side_effect = [
+        SimpleNamespace(choices=[SimpleNamespace(message=SimpleNamespace(content=text))])
+        for text in [draft().model_dump_json(), "{}", "{}", "{}", "{}"]
+    ]
+    with pytest.raises(ValueError, match="Newsletter summary failed after 3 repair attempts"):
+        compose_newsletter(
+            client, model="test", research_bundle="research", industry_bundle="", week_hint="Week",
+            topic=load_topic_for_run(ROOT, None), input_hits=[paper()],
+        )
+    assert client.chat.completions.create.call_count == 5
+
+
+def test_empty_issue_has_deterministic_summary():
+    client = Mock()
+    client.chat.completions.create.return_value = SimpleNamespace(choices=[SimpleNamespace(
+        message=SimpleNamespace(content=json.dumps({
+            "industry_news": {"subsections": []}, "research_papers": {"subsections": []},
+        })),
+    )])
+    result = compose_newsletter(
+        client, model="test", research_bundle="", industry_bundle="", week_hint="Week",
+        topic=load_topic_for_run(ROOT, None), input_hits=[],
+    )
+    assert result.subject == "No selected stories this week"
+    assert result.research_papers.intro == "No relevant research papers were selected for this issue."
+    assert result.industry_news.intro == "No relevant industry stories were selected for this issue."
+    assert client.chat.completions.create.call_count == 1
 
 
 def test_generation_does_not_mark_candidates_published(tmp_path, monkeypatch):
